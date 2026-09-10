@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>攻击链路 - 主线+分支布局</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+body { font-family: -apple-system, sans-serif; margin: 20px; background: #fafafa; }
+h2 { color: #333; margin-bottom: 6px; }
+.subtitle { color: #666; font-size: 13px; margin-bottom: 16px; }
+.legend { background: white; padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: 12px; }
+.legend span { display: inline-block; margin-right: 14px; }
+.box { color: white; padding: 2px 6px; border-radius: 3px; fontSize: 11px; }
+#chart { width: 100%; height: 700px; background: white; border-radius: 8px; }
+.note { background: #e7f3ff; padding: 12px; border-radius: 6px; margin-top: 12px; font-size: 12px; border-left: 4px solid #1890ff; }
+</style>
+</head>
+<body>
+<h2>🎯 攻击链路图（主线 + 两侧分支）</h2>
+<div class="subtitle">主轴：attacker → actions → oss/host → policy → subtype ｜ 上方分支：users ｜ 下方分支：subtype</div>
+<div class="legend">
+  <span><span class="box" style="background:#FF4500">◆</span> attacker 攻击者</span>
+  <span><span class="box" style="background:#40E0D0">▷</span> action 攻击步骤（主轴）</span>
+  <span><span class="box" style="background:#32CD32">●</span> user 用户（上方）</span>
+  <span><span class="box" style="background:#9370DB">▢</span> oss 设备（主轴）</span>
+  <span><span class="box" style="background:#1E90FF">▭</span> host 主机（主轴）</span>
+  <span><span class="box" style="background:#FF6347">◆</span> policy 策略（主轴）</span>
+  <span><span class="box" style="background:#FF69B4">★</span> subtype 类型（下方）</span>
+</div>
+<div id="chart"></div>
+<div class="note">
+  <strong>📖 读图方法：</strong>看中间的主轴线，从左到右是攻击链路（attacker→actions→oss→host→policy→subtype）。主轴上方是被攻击的 user，主轴下方是 subtype 分类。
+</div>
+
+<script>
+const chart = echarts.init(document.getElementById('chart'));
+
+// 单一主轴 + 上下分支布局
+// 主轴 Y=400（中间水平线）
+// 上方 Y=200（user 分支）
+// 下方 Y=600（subtype 分支）
+const nodes = [
+  // ========== 主轴节点（Y=400）==========
+  {id: 'attacker', name: '10.180.120.160', type: 'attacker', x: 80,  y: 400, symbolSize: 75, color: '#FF4500', symbol: 'diamond',
+   label: {fontSize: 13, fontWeight: 'bold'}},
+  {id: 'action1', name: '删除', type: 'action', x: 280, y: 400, symbolSize: 55, color: '#40E0D0', symbol: 'arrow'},
+  {id: 'action2', name: '登录', type: 'action', x: 280, y: 250, symbolSize: 55, color: '#40E0D0', symbol: 'arrow'},
+  {id: 'action3', name: 'IPS',  type: 'action', x: 280, y: 550, symbolSize: 55, color: '#40E0D0', symbol: 'arrow'},
+  {id: 'oss', name: 'GuZ_OFFICE_500E', type: 'oss', x: 480, y: 400, symbolSize: 60, color: '#9370DB', symbol: 'roundRect'},
+  {id: 'host', name: '10.180.3.147', type: 'host', x: 680, y: 400, symbolSize: 60, color: '#1E90FF', symbol: 'rect'},
+  {id: 'policy', name: 'Policy 8.0', type: 'policy', x: 880, y: 400, symbolSize: 60, color: '#FF6347', symbol: 'pin'},
+
+  // ========== 上方分支节点（Y=180-220）= user 们 ==========
+  {id: 'user_li_si',  name: 'li_si',  type: 'user', x: 280, y: 100, symbolSize: 50, color: '#32CD32', symbol: 'circle'},
+  {id: 'user_support', name: 'support', type: 'user', x: 480, y: 100, symbolSize: 50, color: '#32CD32', symbol: 'circle'},
+
+  // ========== 下方分支节点（Y=580-700）= subtype 们 ==========
+  {id: 'subtype_config', name: 'config', type: 'subtype', x: 880, y: 600, symbolSize: 45, color: '#FF69B4', symbol: 'star'},
+  {id: 'subtype_system', name: 'system', type: 'subtype', x: 880, y: 700, symbolSize: 45, color: '#FF69B4', symbol: 'star'},
+  {id: 'subtype_ips',    name: 'ips',    type: 'subtype', x: 1080, y: 400, symbolSize: 45, color: '#FF69B4', symbol: 'star'},
+];
+
+const edges = [
+  // === 主轴连线（实线粗 - 攻击链路）===
+  {source: 'attacker', target: 'action1', lineStyle: {color: '#FF4500', width: 4, type: 'solid'}},
+  {source: 'attacker', target: 'action2', lineStyle: {color: '#FF4500', width: 4, type: 'solid'}},
+  {source: 'attacker', target: 'action3', lineStyle: {color: '#FF4500', width: 4, type: 'solid'}},
+
+  {source: 'action1', target: 'oss', lineStyle: {color: '#40E0D0', width: 3, type: 'solid'}},
+  {source: 'action2', target: 'oss', lineStyle: {color: '#40E0D0', width: 3, type: 'solid'}},
+  {source: 'action3', target: 'host', lineStyle: {color: '#40E0D0', width: 3, type: 'solid'}},
+  {source: 'host', target: 'policy', lineStyle: {color: '#1E90FF', width: 3, type: 'solid'}},
+  {source: 'policy', target: 'subtype_ips', lineStyle: {color: '#FF69B4', width: 3, type: 'solid'}},
+
+  // === 上方分支：user（虚线细）===
+  {source: 'action1', target: 'user_li_si',  lineStyle: {color: '#32CD32', width: 2, type: 'dashed'}, label: {show: true, formatter: '删', fontSize: 10}},
+  {source: 'action2', target: 'user_support', lineStyle: {color: '#32CD32', width: 2, type: 'dashed'}, label: {show: true, formatter: '攻', fontSize: 10}},
+
+  // === 下方分支：subtype（点线）===
+  {source: 'action1', target: 'subtype_config', lineStyle: {color: '#FF69B4', width: 2, type: 'dotted'}},
+  {source: 'action2', target: 'subtype_system', lineStyle: {color: '#FF69B4', width: 2, type: 'dotted'}},
+];
+
+const option = {
+  tooltip: {
+    formatter: (p) => {
+      if (p.dataType === 'node') return `<b>${p.data.name}</b><br/>类型: ${p.data.type}`;
+      return `${p.data.source} → ${p.data.target}`;
+    }
+  },
+  series: [{
+    type: 'graph',
+    layout: 'none',
+    roam: true,
+    draggable: true,
+    symbolSize: 60,
+    edgeSymbol: ['none', 'arrow'],
+    edgeSymbolSize: 8,
+    label: {show: true, position: 'right', fontSize: 11, color: '#333'},
+    lineStyle: {curveness: 0.15, opacity: 0.8},
+    emphasis: {focus: 'adjacency', lineStyle: {width: 5}},
+    data: nodes,
+    links: edges,
+  }]
+};
+
+chart.setOption(option);
+</script>
+</body>
+</html>
