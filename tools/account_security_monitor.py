@@ -23,22 +23,15 @@ from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig
+from tools.index_config import INDEX_SOURCE_PATTERN
+from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
 from tools.ip_trace import ip_trace_request, build_trace_window
 
 logger = logging.getLogger(__name__)
 
 
 # PPL 查询模板
-# PPL_TEMPLATE = """search source=log_g*_fortigate_firewall-*
-# | where action in ("Add", "Delete") AND cfgpath="user.local"
-# | parse ui '.*\((?<uiscrip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\).*'
-# | where user NOT in ("c_admin", "cpc-ops")
-# | where NOT (cidrmatch(uiscrip, "202.76.24.0/27") OR cidrmatch(uiscrip, "202.88.96.0/27"))
-# | eval out5=if(like(user, "s%") OR like(user, "op%"), 'discard', "keep")
-# | where out5="keep"
-# | fields subtype, user, srcip, srccountry, @timestamp_cst, @gid, action, cfgpath, devname, cfgobj, msg, ui, uiscrip, logdesc, devid"""
-
-PPL_TEMPLATE = """search source=log_g*_fortigate_firewall-*
+PPL_TEMPLATE = rf"""search source=`{INDEX_SOURCE_PATTERN}`
 | where action in ("Add", "Delete") AND cfgpath="user.local"
 | parse ui '.*\((?<uiscrip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\).*'
 | where isnotnull(uiscrip) AND uiscrip != ''
@@ -50,9 +43,9 @@ PPL_TEMPLATE = """search source=log_g*_fortigate_firewall-*
 
 # 自定义压缩配置（可选，不传则使用默认配置）
 COMPRESSION_CONFIG = CompressionConfig(
-    threshold=3,
-    max_tokens=2000,
-    max_return_data=3,
+    threshold=COMPRESSION_THRESHOLD,
+    max_tokens=COMPRESSION_MAX_TOKENS,
+    max_return_data=COMPRESSION_MAX_RETURN_DATA,
 )
 
 

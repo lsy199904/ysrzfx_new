@@ -26,6 +26,14 @@ import logging
 import time
 from typing import Any, Callable, Optional, TypeVar, Awaitable
 from contextlib import asynccontextmanager
+from config import (
+    ES_QUERY_TIMEOUT,
+    HTTP_REQUEST_TIMEOUT,
+    LLM_CALL_TIMEOUT,
+    REDIS_SOCKET_TIMEOUT,
+    TOOL_EXECUTION_TIMEOUT,
+    TOTAL_REQUEST_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -148,22 +156,22 @@ def with_timeout(timeout: float, default_value: Any = None, raise_on_timeout: bo
 class TimeoutConfig:
     """超时配置常量"""
     # ES 查询超时（调整为 90 秒，适应大数据量和统计类查询）
-    ES_QUERY_TIMEOUT = 90.0  # 秒
+    ES_QUERY_TIMEOUT = ES_QUERY_TIMEOUT
     
     # LLM 调用超时（保守调整：60 → 90 秒，适应长文本生成）
-    LLM_CALL_TIMEOUT = 90.0  # 秒
+    LLM_CALL_TIMEOUT = LLM_CALL_TIMEOUT
     
     # Redis 操作超时
-    REDIS_OPERATION_TIMEOUT = 5.0  # 秒
+    REDIS_OPERATION_TIMEOUT = REDIS_SOCKET_TIMEOUT
     
     # HTTP 请求超时（保守调整：30 → 45 秒，与 ES 查询保持一致）
-    HTTP_REQUEST_TIMEOUT = 45.0  # 秒
+    HTTP_REQUEST_TIMEOUT = HTTP_REQUEST_TIMEOUT
     
     # 工具执行超时（保守调整：120 → 150 秒，给重试留出时间）
-    TOOL_EXECUTION_TIMEOUT = 150.0  # 秒
+    TOOL_EXECUTION_TIMEOUT = TOOL_EXECUTION_TIMEOUT
     
     # 整体请求超时（保守调整：180 → 240 秒，适应复杂场景）
-    TOTAL_REQUEST_TIMEOUT = 240.0  # 秒
+    TOTAL_REQUEST_TIMEOUT = TOTAL_REQUEST_TIMEOUT
 
 
 async def execute_with_retry(

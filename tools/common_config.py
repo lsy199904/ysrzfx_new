@@ -10,7 +10,6 @@ import json
 import re
 import base64
 import http.client
-import os
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
@@ -18,17 +17,22 @@ from typing import Optional, Dict, Any, List
 # 导入电路断路器
 from utils.circuit_breaker import es_circuit_breaker
 from tools.ppl_guard import (
-    is_gid_empty, normalize_allowed_gids, restrict_source_indices
+    enforce_gid_permission,
+    is_gid_empty,
+    normalize_allowed_gids,
+    restrict_source_indices,
+    validate_authorized_ppl_sources,
 )
-
-ES_HOST = "192.168.100.45"
-ES_PORT = 9200
-
-# 【统一认证配置】ES 认证信息（所有工具共用）
-# 修改密码时只需在这里修改一处即可
-# 注意：使用 `or` 处理环境变量存在但为空的情况
-ES_AUTH_USER = os.getenv("ES_AUTH_USER") or "sylvanli_rd"
-ES_AUTH_PASSWORD = os.getenv("ES_AUTH_PASSWORD") or "94&ba!Rd3e3b03Slyan2"
+from tools.index_config import INDEX_SOURCE_PATTERN
+from config import (
+    ES_AUTH_PASSWORD,
+    ES_AUTH_USER,
+    ES_HOST,
+    ES_PORT,
+    ES_SCHEME,
+    ES_VERIFY_SSL,
+    require_config,
+)
 
 # 兼容旧代码的别名
 OS_USER = ES_AUTH_USER
@@ -38,7 +42,7 @@ OS_PASSWORD = ES_AUTH_PASSWORD
 def normalize_time_param(param_value: str, user_problem: str = "", is_start_time: bool = True) -> str:
     """
     【公共工具】统一的时间参数解析函数
-    
+
     功能：
     1. 如果传入的参数已经是标准格式（YYYY-MM-DD HH:MM:SS），直接返回
     2. 如果参数为空，从 user_problem 中解析
@@ -74,10 +78,14 @@ def normalize_time_param(param_value: str, user_problem: str = "", is_start_time
     parsed = parse_time_string(param_value, is_start_time=is_start_time)
     return parsed if parsed else param_value
 
-ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-ctx.check_hostname = False
-ctx.verify_mode = ssl.CERT_NONE
-ctx.load_default_certs()
+def _build_ssl_context():
+    if ES_VERIFY_SSL:
+        return ssl.create_default_context()
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.load_default_certs()
+    return context
 
 
 def extract_ip_from_text(text: str) -> Optional[str]:
@@ -107,6 +115,18 @@ def extract_username_from_text(text: str) -> Optional[str]:
         if match:
             return match.group(1)
     return None
+
+
+def extract_gid_from_text(text: str) -> Optional[str]:
+    """从用户问题中提取字母数字形式的 gid。"""
+    if not text:
+        return None
+    match = re.search(
+        r"(?:gid|用户组|设备组)\s*(?:为|是|编号为|=|:|：)?\s*([A-Za-z0-9]+)",
+        text,
+        re.IGNORECASE,
+    )
+    return match.group(1) if match else None
 
 
 def parse_time_string(time_str: str, is_start_time: bool = True) -> Optional[str]:
@@ -376,8 +396,9 @@ def parse_time_string(time_str: str, is_start_time: bool = True) -> Optional[str
 
 def _generate_index_list(start_time: str, end_time: str) -> str:
     """
-    根据时间范围生成具体的索引列表
-    例如：log_g*_fortigate_firewall-2026.06.01,log_g*_fortigate_firewall-2026.06.02
+    返回固定索引模式。
+
+    新索引不按日期拆分，日期过滤统一通过 @timestamp_cst 完成。
     
     Args:
         start_time: 开始时间（格式：YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD）
@@ -386,36 +407,7 @@ def _generate_index_list(start_time: str, end_time: str) -> str:
     Returns:
         str: 索引列表字符串
     """
-    indices = []
-    
-    # 解析开始和结束日期
-    try:
-        if ' ' in start_time:
-            start_dt = datetime.strptime(start_time.split(' ')[0], '%Y-%m-%d')
-        else:
-            start_dt = datetime.strptime(start_time, '%Y-%m-%d')
-    except ValueError:
-        return "log_g*_fortigate_firewall-*"
-    
-    try:
-        if ' ' in end_time:
-            end_dt = datetime.strptime(end_time.split(' ')[0], '%Y-%m-%d')
-        else:
-            end_dt = datetime.strptime(end_time, '%Y-%m-%d')
-    except ValueError:
-        return "log_g*_fortigate_firewall-*"
-    
-    # 生成日期范围内的所有索引
-    current_dt = start_dt
-    while current_dt <= end_dt:
-        index_name = f"log_g*_fortigate_firewall-{current_dt.strftime('%Y.%m.%d')}"
-        indices.append(index_name)
-        current_dt += timedelta(days=1)
-    
-    if not indices:
-        return "log_g*_fortigate_firewall-*"
-    
-    return ",".join(indices)
+    return INDEX_SOURCE_PATTERN
 
 
 def _to_utc_iso_format(dt: datetime) -> str:
@@ -440,8 +432,8 @@ def build_ppl_query(ppl_template: str, start_time: str = None, end_time: str = N
     """
     根据参数构建完整的 PPL 查询语句
     【性能优化】
-    1. 时间过滤条件放在 search 命令中实现索引剪枝，其他过滤条件在 where 子句中
-    2. 索引使用具体日期列表而非通配符
+    1. 时间过滤条件放在 search 命令中，避免无时间范围查询
+    2. 索引按 gid 收窄，日期通过时间条件过滤
     3. 时间格式使用 ISO 格式（东八区时间转换为 UTC）
 
     【数据权限】
@@ -486,16 +478,7 @@ def build_ppl_query(ppl_template: str, start_time: str = None, end_time: str = N
                 if parsed:
                     end_dt = datetime.strptime(parsed, '%Y-%m-%d %H:%M:%S')
     
-    # 【性能优化 1】生成具体索引列表
-    if start_dt and end_dt:
-        index_list = _generate_index_list(
-            start_dt.strftime('%Y-%m-%d %H:%M:%S'),
-            end_dt.strftime('%Y-%m-%d %H:%M:%S')
-        )
-        # 替换模板中的索引通配符
-        ppl = ppl.replace("log_g*_fortigate_firewall-*", index_list)
-    
-    # 【性能优化 2】构建时间过滤条件（使用 ISO 格式，东八区转 UTC）
+    # 新索引不包含日期；日期过滤通过 @timestamp_cst 完成。
     if start_dt:
         time_conditions.append(f"@timestamp_cst >= '{_to_utc_iso_format(start_dt)}'")
     
@@ -528,7 +511,7 @@ def build_ppl_query(ppl_template: str, start_time: str = None, end_time: str = N
         gid_cond = " or ".join(f"@gid = '{g}'" for g in allowed_list)
         where_conditions.append(f"({gid_cond})")
     
-    # 【性能优化】将时间过滤条件添加到 search 命令行末尾（索引剪枝）
+    # 将时间过滤条件添加到 search 命令行末尾。
     # 将模板按行分割，在第一行（search 命令）末尾添加时间条件
     if time_conditions:
         lines = ppl.split('\n')
@@ -556,8 +539,8 @@ def build_aggregate_query(ppl_template: str, start_time: str = None, end_time: s
     """
     构建聚合查询的 PPL 语句（通用版本）
     【性能优化】
-    1. 时间过滤条件放在 search 命令中实现索引剪枝，其他过滤条件在 where 子句中
-    2. 索引使用具体日期列表而非通配符
+    1. 时间过滤条件放在 search 命令中，避免无时间范围查询
+    2. 索引按 gid 收窄，日期通过时间条件过滤
     3. 时间格式使用 ISO 格式（东八区时间转换为 UTC）
     
     Args:
@@ -610,16 +593,7 @@ def build_aggregate_query(ppl_template: str, start_time: str = None, end_time: s
             if parsed:
                 end_dt = datetime.strptime(parsed, '%Y-%m-%d %H:%M:%S')
     
-    # 【性能优化 1】生成具体索引列表
-    if start_dt and end_dt:
-        index_list = _generate_index_list(
-            start_dt.strftime('%Y-%m-%d %H:%M:%S'),
-            end_dt.strftime('%Y-%m-%d %H:%M:%S')
-        )
-        # 替换模板中的索引通配符
-        base_query = base_query.replace("log_g*_fortigate_firewall-*", index_list)
-    
-    # 【性能优化 2】构建时间过滤条件（使用 ISO 格式，东八区转 UTC）
+    # 新索引不包含日期；日期过滤通过时间字段完成。
     time_conditions = []
     if start_dt:
         time_conditions.append(f"{time_field} >= '{_to_utc_iso_format(start_dt)}'")
@@ -645,7 +619,7 @@ def build_aggregate_query(ppl_template: str, start_time: str = None, end_time: s
         gid_cond = " or ".join(f"@gid = '{g}'" for g in allowed_list)
         where_conditions.append(f"({gid_cond})")
     
-    # 【性能优化】将时间过滤条件添加到 search 命令行末尾（索引剪枝）
+    # 将时间过滤条件添加到 search 命令行末尾。
     # 将模板按行分割，在第一行（search 命令）末尾添加时间条件
     if time_conditions:
         lines = base_query.split('\n')
@@ -699,13 +673,69 @@ def query_es(ppl_query: str, user: str = None, password: str = None, debug_info:
         print(f"[ES_QUERY] 结束时间：{debug_info.get('end_time', '未指定')}")
         print(f"[ES_QUERY] 过滤 IP: {debug_info.get('filter_ip', '无')}")
         print(f"[ES_QUERY] 过滤用户：{debug_info.get('filter_user', '无')}")
-    
-    user = user or OS_USER
-    password = password or OS_PASSWORD
+
+    # 最后一层权限防护：禁止绕过工具入口直接提交任意 PPL。
+    # 管理员必须同样通过请求上下文进入，只是管理员上下文不受 gid 索引限制。
+    from tools.tool_base import request_ctx
+    gid_scope = request_ctx.get()
+    if gid_scope is None:
+        return {
+            "ppl_query": ppl_query,
+            "data": [],
+            "count": 0,
+            "error": "缺少数据权限上下文，拒绝执行 ES 查询",
+            "http_status": 403,
+        }
+
+    is_admin = bool(gid_scope.get("is_admin", False))
+    allowed_gids = gid_scope.get("allowed_gids")
+    if not is_admin:
+        if allowed_gids is None:
+            return {
+                "ppl_query": ppl_query,
+                "data": [],
+                "count": 0,
+                "error": "缺少用户组权限信息，拒绝执行 ES 查询",
+                "http_status": 403,
+            }
+        ppl_query, permission_error = enforce_gid_permission(
+            ppl_query,
+            allowed_gids,
+            host=ES_HOST,
+            port=ES_PORT,
+            user=ES_AUTH_USER,
+            password=ES_AUTH_PASSWORD,
+        )
+        if permission_error:
+            return {
+                "ppl_query": ppl_query,
+                "data": [],
+                "count": 0,
+                "error": permission_error,
+                "http_status": 403,
+            }
+        authorized, source_error = validate_authorized_ppl_sources(
+            ppl_query,
+            allowed_gids,
+            is_admin=False,
+        )
+        if not authorized:
+            return {
+                "ppl_query": ppl_query,
+                "data": [],
+                "count": 0,
+                "error": source_error,
+                "http_status": 403,
+            }
+
+    user = user or ES_AUTH_USER
+    password = password or ES_AUTH_PASSWORD
+    user = require_config(user, "ES_AUTH_USER")
+    password = require_config(password, "ES_AUTH_PASSWORD")
     
     # 【调试日志】记录认证信息
     print(f"[ES_QUERY] 认证用户：{user}")
-    print(f"[ES_QUERY] 认证密码：{password[:5]}...{password[-3:]} (隐藏中间部分)")
+    print("[ES_QUERY] 认证密码：已配置")
     
     # 【新增】检查电路断路器状态
     if es_circuit_breaker.is_open:
@@ -742,12 +772,24 @@ def query_es(ppl_query: str, user: str = None, password: str = None, debug_info:
     es_timeout = TimeoutConfig.ES_QUERY_TIMEOUT
     
     # 【调试日志】记录请求详情
-    print(f"[ES_QUERY] 请求 URL: https://{ES_HOST}:{ES_PORT}/_plugins/_ppl")
+    print(f"[ES_QUERY] 请求 URL: {ES_SCHEME}://{ES_HOST}:{ES_PORT}/_plugins/_ppl")
     print(f"[ES_QUERY] Auth Header: Basic {auth_b64[:15]}...{auth_b64[-10:]}")
     print(f"[ES_QUERY] 超时设置：{es_timeout}秒")
     
     try:
-        conn = http.client.HTTPSConnection(ES_HOST, ES_PORT, timeout=int(es_timeout), context=ctx)
+        connection_cls = (
+            http.client.HTTPSConnection
+            if ES_SCHEME.lower() == "https"
+            else http.client.HTTPConnection
+        )
+        connection_args = {
+            "host": ES_HOST,
+            "port": ES_PORT,
+            "timeout": int(es_timeout),
+        }
+        if connection_cls is http.client.HTTPSConnection:
+            connection_args["context"] = _build_ssl_context()
+        conn = connection_cls(**connection_args)
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Basic {auth_b64}"

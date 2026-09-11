@@ -47,7 +47,7 @@ core_files/
 │                       │ L1 场景工具 │   │ L2 自由查询 │   │  工具基座   │        │
 │                       │          │   │          │   │          │        │
 │                       │ - 暴力破解 │   │ - PPL 生成  │   │ - 缓存    │        │
-│                       │ - 账户监控 │   │ - 索引剪枝 │   │ - 压缩    │        │
+│                       │ - 账户监控 │   │ - gid索引收窄 │ │ - 压缩    │        │
 │                       │ - 网络攻击 │   │ - 3 次重试  │   │ - 步骤追踪 │        │
 │                       │ - 系统监控 │   │          │   │          │        │
 │                       │ - 告警规则 │   │          │   │          │        │
@@ -147,7 +147,7 @@ core_files/
 
 - [x] **L2 自由查询工具**
   - [x] LLM 生成 PPL 查询
-  - [x] 索引日期剪枝优化
+  - [x] gid 索引收窄与时间字段过滤
   - [x] 3 次重试机制
   - [x] 失败后 L1 场景引导
 
@@ -338,21 +338,35 @@ docker ps | grep siem-agent
 
 ### 配置说明
 
-#### 模型配置（agent_chat.py）
+#### 环境变量配置（.env）
 
-```python
-# 当前上下文 32K（推荐配置）
-model_name = "Qwen/Qwen3-32B"
-base_url = "http://10.180.158.20:18080"
-openai_api_key = 'not empty'
+复制 `.env.example` 为 `.env`，根据环境填写配置。应用会自动加载项目根目录的 `.env`，
+进程环境变量优先级高于 `.env`。大模型、ES 账号密码、告警服务 SSO 密钥等配置不再写入业务代码。
 
-# 备选配置 64K 上下文
-# model_name = "Qwen/Qwen3.6-27B"
-# base_url = "http://10.180.158.19/qwen36-27b"
+```bash
+cp .env.example .env
 
-# 备选配置 128K 上下文
-# model_name = "Qwen/Qwen3.6-35B-A3B"
-# base_url = "http://10.180.158.19/qwen36-35b-a3b"
+# 常用配置示例
+LLM_BASE_URL=http://your-llm-service:18080
+LLM_MODEL=Qwen/Qwen3-32B
+ES_HOST=your-es-host
+ES_AUTH_USER=your-es-user
+ES_AUTH_PASSWORD=your-es-password
+ALERT_SSO_APP_ID=your-app-id
+ALERT_SSO_SECRET_KEY=your-secret
+```
+
+#### 索引组合配置（index_config.yaml）
+
+索引格式为 `log_g{gid}_{vendor}_{product}`。在 `index_config.yaml` 中维护允许查询的
+厂商和产品组合；增加组合后，系统会自动为每个 gid 拼接并探测对应索引。
+
+```yaml
+index_combinations:
+  - vendor: fortinet
+    product: fortigate
+  - vendor: fortinet
+    product: sase
 ```
 
 ### 测试接口

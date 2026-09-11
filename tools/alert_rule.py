@@ -9,22 +9,21 @@ import requests
 import json
 from pydantic import BaseModel, Field
 from datetime import datetime
+from config import (
+ALERT_API_DOMAIN,
+    ALERT_REQUEST_TIMEOUT,
+    ALERT_SSO_APP_ID,
+    ALERT_SSO_SECRET_KEY,
+    ALERT_VERIFY_SSL,
+    ALERT_PAGE_SIZE,
+    ALERT_TABLE_NAME,
+    require_config,
+)
 
-# 配置常量
-SSO_APP_ID = "sso20251001"
-SSO_SECRET_KEY = "C0HJU0La2o6qtgJ4ZvLk"
-# API_DOMAIN = "http://10.180.158.96:8888"
-API_DOMAIN = "https://192.168.101.54:8888"
-
-# API_DOMAIN = "https://43.139.108.247:8888"
-# API_DOMAIN = "http://203.85.9.168:8888"
-
-# SSO_APP_ID = "111"
-# SSO_SECRET_KEY = "11"
-# API_DOMAIN = "111"
-# # API_DOMAIN = "http://218.97.38.113:50134"
-# ACCOUNT_GID = "111"
-# ACCOUNT_EMAIL = "1111"
+# 配置别名（实际值来自 config.py / .env）
+SSO_APP_ID = ALERT_SSO_APP_ID
+SSO_SECRET_KEY = ALERT_SSO_SECRET_KEY
+API_DOMAIN = ALERT_API_DOMAIN
 
 # 发送POST请求的公共方法
 def send_post_request(url, payload, headers=None):
@@ -34,8 +33,8 @@ def send_post_request(url, payload, headers=None):
             url,
             json=payload,  # 自动序列化并设置Content-Type
             headers=headers,
-            timeout=50,     # 添加超时设置
-            verify=False#禁用 SSL 证书验证
+            timeout=ALERT_REQUEST_TIMEOUT,
+            verify=ALERT_VERIFY_SSL
         )
         print('***************')
         print(response.text)
@@ -52,7 +51,9 @@ def generate_signature():
     生成签名密钥
     """
     timestamp = int(time.time())
-    encode_str = f"{SSO_APP_ID}{SSO_SECRET_KEY[:3]}{SSO_SECRET_KEY[-3:]}{timestamp}"
+    app_id = require_config(SSO_APP_ID, "ALERT_SSO_APP_ID")
+    secret_key = require_config(SSO_SECRET_KEY, "ALERT_SSO_SECRET_KEY")
+    encode_str = f"{app_id}{secret_key[:3]}{secret_key[-3:]}{timestamp}"
     return base64.b64encode(encode_str.encode()).decode()
 
 
@@ -112,10 +113,10 @@ def query_alert_rule_result(
         end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     # table_name="alarm_rule_result"
-    table_name="alarm_result"
+    table_name=ALERT_TABLE_NAME
     sign_key = generate_signature()
     page_no = 1#查询第 1 页
-    page_size = 500#每页 500 条
+    page_size = ALERT_PAGE_SIZE
     print(f"\n查询告警规则 [表: {table_name}, GID: {gid}, 开始时间：{start_time}, 结束时间：{end_time}, 当前页码：{page_no}, 每页大小：{page_size}]")
     url = f"{API_DOMAIN}/admin/sdk/alert-rule-result"
     headers = {}

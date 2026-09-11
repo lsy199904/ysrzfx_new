@@ -14,6 +14,12 @@ import asyncio
 import contextvars
 from typing import Optional, Dict, Any, Callable
 from datetime import datetime
+from config import (
+    CACHE_TOOL_TTL,
+    COMPRESSION_MAX_RETURN_DATA,
+    COMPRESSION_MAX_TOKENS,
+    COMPRESSION_THRESHOLD,
+)
 # 兼容 langchain 0.0.354 和 0.1.x 版本
 try:
     from langchain.agents import Tool
@@ -121,16 +127,16 @@ from dataclasses import dataclass, field
 class CompressionConfig:
     """压缩配置"""
     # 压缩触发阈值：数据量 >= 此值时触发压缩
-    threshold: int = 15
+    threshold: int = COMPRESSION_THRESHOLD
     
     # 统计类关键词（触发压缩）
     aggregate_keywords: list = field(default_factory=lambda: ["哪些", "多少", "排名", "统计", "top", "主要"])
     
     # Token 限制
-    max_tokens: int = 2000
+    max_tokens: int = COMPRESSION_MAX_TOKENS
     
     # 返回原始数据条数限制
-    max_return_data: int = 5
+    max_return_data: int = COMPRESSION_MAX_RETURN_DATA
 
 
 # ============================================
@@ -193,13 +199,15 @@ class ToolExecutor:
         
         # 导入依赖
         from tools.common_config import (
-            extract_ip_from_text, extract_username_from_text, normalize_time_param,
+            extract_ip_from_text, extract_username_from_text, extract_gid_from_text,
+            normalize_time_param,
             build_ppl_query, query_es, ES_AUTH_USER, ES_AUTH_PASSWORD, ES_HOST, ES_PORT
         )
         from utils.log_compressor import LogCompressor, generate_summary_statistics, format_summary_text
         
         self.extract_ip_from_text = extract_ip_from_text
         self.extract_username_from_text = extract_username_from_text
+        self.extract_gid_from_text = extract_gid_from_text
         self.normalize_time_param = normalize_time_param
         self.build_ppl_query = build_ppl_query
         self.query_es = query_es
@@ -229,6 +237,8 @@ class ToolExecutor:
             self.filter_ip = self.extract_ip_from_text(self.user_problem)
         if not self.filter_user:
             self.filter_user = self.extract_username_from_text(self.user_problem)
+        if not self.gid:
+            self.gid = self.extract_gid_from_text(self.user_problem)
     
     def _normalize_time(self):
         """标准化时间参数"""
@@ -260,6 +270,7 @@ class ToolExecutor:
                 import hashlib
                 allowed_gids_hash = hashlib.md5(json.dumps(sorted(allowed_gids), sort_keys=True).encode()).hexdigest()[:8]
         
+        from tools.index_config import INDEX_SOURCE_PATTERN
         cache_params = {
             "user_problem": self.user_problem,
             "start_time": self.start_time,
@@ -267,6 +278,8 @@ class ToolExecutor:
             "filter_ip": self.filter_ip,
             "filter_user": self.filter_user,
             "gid": self.gid,
+            "is_admin": bool(self.gid_scope and self.gid_scope.get("is_admin", False)),
+            "index_source_pattern": INDEX_SOURCE_PATTERN,
             "login_account": login_account,  # 按账号隔离缓存
             "allowed_gids_hash": allowed_gids_hash,  # 按权限范围隔离缓存
         }
@@ -302,6 +315,7 @@ class ToolExecutor:
                 import hashlib
                 allowed_gids_hash = hashlib.md5(json.dumps(sorted(allowed_gids), sort_keys=True).encode()).hexdigest()[:8]
         
+        from tools.index_config import INDEX_SOURCE_PATTERN
         cache_params = {
             "user_problem": self.user_problem,
             "start_time": self.start_time,
@@ -309,12 +323,14 @@ class ToolExecutor:
             "filter_ip": self.filter_ip,
             "filter_user": self.filter_user,
             "gid": self.gid,
+            "is_admin": bool(self.gid_scope and self.gid_scope.get("is_admin", False)),
+            "index_source_pattern": INDEX_SOURCE_PATTERN,
             "login_account": login_account,  # 按账号隔离缓存
             "allowed_gids_hash": allowed_gids_hash,  # 按权限范围隔离缓存
         }
         try:
             # 【修复】使用安全异步运行器
-            self._run_async(ToolCacheManager.save_cached_result(self.tool_name, cache_params, cache_data, ttl=300))
+            self._run_async(ToolCacheManager.save_cached_result(self.tool_name, cache_params, cache_data, ttl=CACHE_TOOL_TTL))
         except Exception as e:
             print(f"缓存保存失败：{e}")
 
@@ -530,21 +546,22 @@ class ToolExecutor:
         elif isinstance(self.user_problem, dict):
             self.user_problem = str(self.user_problem)
 
+        # 先从用户原文提取 gid，再做权限判断，避免 gid 未作为工具参数传入时漏检。
+        self._extract_filters()
+
         # 【数据权限】入口越权拦截：gid 参数不在白名单内时直接返回固定模板，
         # 不再执行查询（带 suggestion 字段，agent_chat 会直推 final_answer）
         from tools.ppl_guard import is_gid_empty, check_gid_allowed, build_denied_result, normalize_allowed_gids
         if self.gid_scope is not None:
             allowed_gids = self.gid_scope.get("allowed_gids")
-            if allowed_gids is not None:
+            is_admin = self.gid_scope.get("is_admin", False)
+            if allowed_gids is not None and not is_admin:
                 if not is_gid_empty(self.gid) and not check_gid_allowed(self.gid, allowed_gids):
                     print(f"[{self.tool_name.upper()}] [GID_GUARD] 越权拦截：gid={self.gid}，白名单：{normalize_allowed_gids(allowed_gids)}")
                     return build_denied_result(self.gid, allowed_gids)
 
         # 打印调试信息
         self._print_debug_info()
-        
-        # 提取过滤条件
-        self._extract_filters()
         
         # 标准化时间
         self._normalize_time()
@@ -554,8 +571,7 @@ class ToolExecutor:
             self.preprocess_hook(self)
         
         # 【新增】索引存在性探测（在缓存检查之前，不依赖通配符）
-        # 原因：build_ppl_query 内部已将 log_g* 替换为具体索引名，enforce_gid_permission
-        # 中的 restrict_source_indices 无法匹配通配符，导致索引探测失效
+        # 索引存在性探测独立于查询构造，确保缓存命中时也能拦截无效索引。
         # 必须在缓存检查之前运行，确保所有查询（包括缓存命中）都能被拦截无效索引
         print(f"[GID_GUARD_DEBUG] execute() entering index check section. gid_scope={self.gid_scope}, gid={self.gid}")
         self.index_check_info = None
@@ -578,7 +594,8 @@ class ToolExecutor:
                     print(f"[{self.tool_name.upper()}] [GID_GUARD] 索引探测拦截：{err_msg}")
                     self.index_check_error = err_msg
                 # 无论索引是否存在，都记录探测步骤，供前端步骤列表展示
-                actual_pattern = index_info.get("pattern", "log_g*_fortigate_firewall-*")
+                from tools.index_config import INDEX_SOURCE_PATTERN
+                actual_pattern = index_info.get("pattern", INDEX_SOURCE_PATTERN)
                 self.index_check_steps = [{
                     "step": 1,
                     "title": "索引存在性探测",
@@ -623,6 +640,7 @@ class ToolExecutor:
                     user=self.ES_AUTH_USER, password=self.ES_AUTH_PASSWORD,
                     start_time=self.start_time, end_time=self.end_time,
                     skip_gid_injection=is_admin,  # 管理员跳过 gid 条件注入，仅做索引展开
+                    requested_gid=self.gid,
                 )
         
         print(f"\n[{self.tool_name.upper()}] === PPL 查询（权限处理后）===")

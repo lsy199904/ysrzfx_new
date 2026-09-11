@@ -1,0 +1,8 @@
+# 日志索引组合配置。
+# 每个组合对应一个索引后缀：log_g{gid}_{vendor}_{product}
+index_combinations:
+  - vendor: fortinet
+    product: fortigate
+  # 示例：
+  # - vendor: fortinet
+  #   product: sase

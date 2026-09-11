@@ -14,6 +14,12 @@ import re
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig
+from tools.index_config import INDEX_SOURCE_PATTERN
+from config import (
+    COMPRESSION_MAX_TOKENS,
+    IP_TRACE_COMPRESSION_THRESHOLD,
+    IP_TRACE_MAX_RETURN_DATA,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -899,21 +905,21 @@ def build_graph_data(raw_data: dict) -> dict:
 
 # 通用溯源 PPL 模板
 # 【重要】仅保留 IP 基础过滤 + 关键字段筛选。
-# 时间条件由 build_ppl_query() 统一注入到 search 命令行实现索引剪枝。
+# 时间条件由 build_ppl_query() 统一注入到 search 命令行。
 # 【字段对齐】必须与 brute_force.py:40 保持一致，Fortigate 索引中实际存在这些字段：
 #   @timestamp_cst, user, attack_src, srcip, remip, action, reason, msg, subtype, @gid, devname, policyid
 # 【删除】以下字段在 Fortigate 索引中不存在，OpenSearch 会报 IllegalArgumentException：
 #   app, policyname, hostname, srcport, proto, service, dstport
-IP_TRACE_PPL_TEMPLATE = """search source=`log_g*_fortigate_firewall-*`
+IP_TRACE_PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
 | fields @timestamp_cst, srcip, dstip, remip, action, reason, msg, subtype, type, user, devname, policyid, @gid, attack_src"""
 
 
 # 溯源查询压缩配置
 # 溯源数据通常较少，不需要额外压缩
 IP_TRACE_COMPRESSION_CONFIG = CompressionConfig(
-    threshold=15,
-    max_tokens=2000,
-    max_return_data=5,
+    threshold=IP_TRACE_COMPRESSION_THRESHOLD,
+    max_tokens=COMPRESSION_MAX_TOKENS,
+    max_return_data=IP_TRACE_MAX_RETURN_DATA,
 )
 
 

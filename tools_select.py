@@ -57,7 +57,7 @@ tools = [
     SupportDictArgsTool.from_function(
             func=free_query_request,
             name="free_query_request",
-            description="L2 自由 PPL 查询工具，支持用户自由提问并自动生成 PPL 查询。【重要】参数：user_problem（用户原始问题，LLM 必须从用户输入中提取并传递此参数！）、ppl_query（可选，不传则由 LLM 自动生成，必须以 'search source=`log_g*_fortigate_firewall-*`' 或 'search source=log_g*_fortigate_firewall-*' 开头）、gid（可选，设备组 ID，用于过滤特定设备组的日志，对应日志字段@gid）、start_date（可选，查询起始日期）、end_date（可选，查询结束日期）",
+            description="L2 自由 PPL 查询工具，支持用户自由提问并自动生成 PPL 查询。【重要】参数：user_problem（用户原始问题，LLM 必须从用户输入中提取并传递此参数！）、ppl_query（可选，不传则由 LLM 自动生成，索引组合由 index_config.yaml 配置，必须使用 log_g*_<vendor>_<product> 模式）、gid（可选，设备组 ID，用于过滤特定设备组的日志，对应日志字段@gid）、start_date（可选，查询起始日期）、end_date（可选，查询结束日期）",
             args_schema=FreeQueryInput,
         ),
     # IP 溯源工具

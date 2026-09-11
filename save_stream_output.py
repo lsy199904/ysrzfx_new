@@ -20,6 +20,7 @@
 """
 import json
 import requests
+from config import APP_HOST, APP_PORT
 import time
 from datetime import datetime
 
@@ -38,7 +39,7 @@ def call_and_save_stream_output(session_id, user_input, output_dir="./output", l
     os.makedirs(output_dir, exist_ok=True)
     
     start_time = time.time()
-    url = "http://127.0.0.1:8000/agentchat"
+    url = f"http://{APP_HOST}:{APP_PORT}/agentchat"
     headers = {"Content-Type": "application/json"}
     payload = {
         "session_id": session_id,

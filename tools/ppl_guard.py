@@ -14,6 +14,17 @@ PPL 数据权限守卫（gid 白名单强制过滤）
 """
 import re
 import time
+from tools.index_config import INDEX_SOURCE_REGEX, build_index_names
+from config import (
+    ES_HOST,
+    ES_PORT,
+    ES_INDEX_TIMEOUT,
+    ES_AUTH_USER,
+    ES_AUTH_PASSWORD,
+    ES_SCHEME,
+    ES_VERIFY_SSL,
+    INDEX_CACHE_TTL,
+)
 
 # ============================================
 # 越权提示模板（固定文案，面向用户）
@@ -45,10 +56,13 @@ _GID_EMPTY_VALUES = ('', 'None', 'none', 'null', 'Null', 'NULL')
 
 # 缓存已检查的索引存在性 {index_name: bool}
 _index_cache = {}
-_INDEX_CACHE_TTL = 300  # 缓存 5 分钟
+_INDEX_CACHE_TTL = INDEX_CACHE_TTL
+_PPL_SOURCE_RE = re.compile(
+    r"(?i)\bsearch\s+source\s*=\s*(?:`([^`]*)`|([^\s|]+))"
+)
 
 
-def _check_index_exists(index_name: str, host: str = "192.168.100.45", port: int = 9200, user: str = None, password: str = None) -> bool:
+def _check_index_exists(index_name: str, host: str = ES_HOST, port: int = ES_PORT, user: str = None, password: str = None) -> bool:
     """
     检查索引是否存在（带缓存）
     
@@ -80,15 +94,14 @@ def _check_index_exists(index_name: str, host: str = "192.168.100.45", port: int
     import ssl
     import base64
     import http.client
-    import os
     
     if user and password:
         auth_str = f"{user}:{password}"
         auth_b64 = base64.b64encode(auth_str.encode()).decode()
     else:
-        # 尝试从环境变量获取
-        auth_user = os.getenv("ES_AUTH_USER")
-        auth_pass = os.getenv("ES_AUTH_PASSWORD")
+        # 配置中心已统一加载 .env，并兼容 ES_USER/ES_PASSWORD 别名。
+        auth_user = user or ES_AUTH_USER
+        auth_pass = password or ES_AUTH_PASSWORD
         if auth_user and auth_pass:
             auth_str = f"{auth_user}:{auth_pass}"
             auth_b64 = base64.b64encode(auth_str.encode()).decode()
@@ -98,11 +111,23 @@ def _check_index_exists(index_name: str, host: str = "192.168.100.45", port: int
             print(f"[GID_GUARD] 警告：_check_index_exists 缺少 ES 认证信息，将尝试匿名 HEAD")
     
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        
-        conn = http.client.HTTPSConnection(host, port, timeout=5, context=ctx)
+        connection_cls = (
+            http.client.HTTPSConnection
+            if ES_SCHEME.lower() == "https"
+            else http.client.HTTPConnection
+        )
+        connection_args = {
+            "host": host,
+            "port": port,
+            "timeout": ES_INDEX_TIMEOUT,
+        }
+        if connection_cls is http.client.HTTPSConnection:
+            ctx = ssl.create_default_context()
+            if not ES_VERIFY_SSL:
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+            connection_args["context"] = ctx
+        conn = connection_cls(**connection_args)
         headers = {"Content-Type": "application/json"}
         if auth_b64:
             headers["Authorization"] = f"Basic {auth_b64}"
@@ -113,14 +138,14 @@ def _check_index_exists(index_name: str, host: str = "192.168.100.45", port: int
         resp.read()  # 消耗响应体
         conn.close()
         
-        # 缓存结果
-        _index_cache[index_name] = exists
+        # 缓存结果，并记录时间以便按 INDEX_CACHE_TTL 过期。
+        _index_cache[index_name] = (exists, time.time())
         return exists
     except Exception as e:
-        # 异常时记录警告，按"未知"放行（让上层走 ES 报错路径）
+        # 探测失败不能当作索引存在，否则网络或认证故障会绕过有效性探测。
         print(f"[GID_GUARD] 索引存在性探测异常 {index_name}: {e}")
-        _index_cache[index_name] = True
-        return True
+        _index_cache[index_name] = (False, time.time())
+        return False
 
 
 def is_gid_empty(gid) -> bool:
@@ -198,7 +223,7 @@ def build_index_invalid_result(specific_gid, allowed_gids, pattern: str = None) 
     Args:
         specific_gid: 用户指定的具体 gid（None 表示用户未指定）
         allowed_gids: 白名单列表
-        pattern: 探测的完整索引模式（如 log_g12345_fortigate_firewall-2026.03.26 或 log_g12345_fortigate_firewall-*）
+        pattern: 探测的完整索引模式列表
 
     Args:
         skip_gid_injection: 是否跳过 gid 条件注入（管理员有 allowed_gids 时使用）
@@ -282,20 +307,10 @@ def inject_gid_condition(ppl: str, allowed_gids) -> str:
 
 
 def restrict_source_indices(ppl: str, allowed_gids, specific_gid: str = None,
-                           host: str = "192.168.100.45", port: int = 9200,
+                           host: str = ES_HOST, port: int = ES_PORT,
                            user: str = None, password: str = None) -> str:
     """
-    索引层限制：把 log_g* 通配符按 (gid, 日期) 组合展开为白名单 gid 的具体索引。
-
-    【核心修复 - 按 (gid, 日期) 组合探测】
-    1. 探测规则必须同时带 gid 和日期：log_g{gid}_fortigate_firewall-{date}
-    2. 用户问题带具体日期时，探测必须按每个日期分别检查（不能只用通配符）
-    3. 用户问题没有具体日期（PPL 中日期后缀为通配符 *）时，按全通配符探测
-    4. admin 模式（allowed_gids=None）不限制，不做任何探测
-    5. 指定 gid 索引不存在 → 返回空字符串（触发指定 gid 兜底）
-    6. 所有 (gid, 日期) 组合都不存在 → 返回空字符串（触发全无效兜底）
-
-    索引命名规则：log_g{gid}_fortigate_firewall-{日期}
+    索引层限制：把 YAML 配置生成的 wildcard 索引模式展开为有效具体索引。
 
     Args:
         ppl: PPL 查询语句
@@ -319,60 +334,92 @@ def restrict_source_indices(ppl: str, allowed_gids, specific_gid: str = None,
     else:
         gids_to_check = allowed
 
-    # 收集 PPL 中所有 log_g* token 的日期后缀
-    date_tokens = re.findall(r"log_g\*[^\s` ,|]*", ppl)
-    if not date_tokens:
+    if not INDEX_SOURCE_REGEX.search(ppl):
         return ppl  # 没有匹配到索引模式，原样返回
-    # 去重保留顺序
-    seen = set()
-    suffixes = []
-    for tok in date_tokens:
-        sfx = tok[len("log_g*"):]
-        if sfx not in seen:
-            seen.add(sfx)
-            suffixes.append(sfx)
 
-    # 【关键】按 (gid, 日期) 组合探测：每个日期后缀 × 每个 gid 都查一次
-    # 区分两种情况：
-    #   - 日期后缀含具体日期（如 _fortigate_firewall-2026.03.26）→ 必须用具体日期探测
-    #   - 日期后缀是通配符（如 _fortigate_firewall-*）→ 用通配符探测
-    valid_combos = {}  # suffix -> [gid 列表]
-    any_valid = False
-    for sfx in suffixes:
-        valid_gids = []
-        for g in gids_to_check:
-            # 始终按 (gid, sfx) 探测：sfx 含具体日期就是具体日期探测，含 * 就是通配符探测
-            full_index = f"log_g{g}{sfx}"
-            if _check_index_exists(full_index, host, port, user, password):
-                valid_gids.append(g)
-                any_valid = True
-        valid_combos[sfx] = valid_gids
+    valid_indices = []
+    for g in gids_to_check:
+        for index_name in build_index_names(g):
+            if _check_index_exists(index_name, host, port, user, password):
+                valid_indices.append(index_name)
 
-    if not any_valid:
-        return ""  # 全部 (gid, 日期) 组合都不存在
+    if not valid_indices:
+        return ""
 
-    # 展开 PPL：对每个 log_g* token，用该日期的 valid_gids 替换
-    def _expand(m):
-        sfx = m.group(0)[len("log_g*"):]
-        valid_gids = valid_combos.get(sfx, [])
-        if not valid_gids:
-            return ""  # 该日期没有 valid gid（已被上层判定 any_valid=True 所以这里有值）
-        return ",".join(f"log_g{g}{sfx}" for g in valid_gids)
-
-    result = re.sub(r"log_g\*[^\s` ,|]*", _expand, ppl)
-    # 清理：空扩展会产生连续逗号，统一规整
-    result = re.sub(r",+", ",", result)
-    result = re.sub(r"`,", "`", result)
-    result = re.sub(r",`", "`", result)
+    result = INDEX_SOURCE_REGEX.sub(
+        lambda match: ",".join(
+            index_name
+            for index_name in valid_indices
+            if index_name.endswith(f"_{match.group(1)}")
+        ),
+        ppl,
+    )
+    # 某个组合没有有效索引时，清理 source 列表中的空项。
+    result = re.sub(
+        r"(?i)(search\s+source=`)([^`]+)(`)",
+        lambda match: f"{match.group(1)}{','.join(
+            part.strip() for part in match.group(2).split(',') if part.strip()
+        )}{match.group(3)}",
+        result,
+        count=1,
+    )
+    result = re.sub(
+        r"(?i)(search\s+source=)(?!`)([^\s|]+)",
+        lambda match: f"{match.group(1)}{','.join(
+            part.strip() for part in match.group(2).split(',') if part.strip()
+        )}",
+        result,
+        count=1,
+    )
+    # 所有候选组合均无有效索引时，返回空字符串，让上层统一走 404 兜底。
+    source_match = re.search(
+        r"(?i)search\s+source=(?:`([^`]*)`|([^\s|]+))",
+        result,
+    )
+    if source_match and not (source_match.group(1) or source_match.group(2) or "").strip():
+        return ""
     return result
 
 
+def validate_authorized_ppl_sources(
+    ppl: str,
+    allowed_gids,
+    is_admin: bool = False,
+) -> tuple[bool, str]:
+    """校验最终 PPL 的 source 只能指向当前用户可访问的具体索引。"""
+    if is_admin:
+        return True, ""
 
-def enforce_gid_permission(ppl: str, allowed_gids, 
-                          host: str = "192.168.100.45", port: int = 9200,
+    allowed = normalize_allowed_gids(allowed_gids)
+    match = _PPL_SOURCE_RE.search(ppl or "")
+    if not match:
+        return False, "PPL 缺少合法的 search source"
+
+    source_text = (match.group(1) or match.group(2) or "").strip()
+    source_parts = [part.strip() for part in source_text.split(",") if part.strip()]
+    if not source_parts:
+        return False, "PPL 的 search source 为空"
+
+    allowed_indices = {
+        index_name
+        for gid in allowed
+        for index_name in build_index_names(gid)
+    }
+    unauthorized = [
+        source for source in source_parts
+        if source not in allowed_indices or "*" in source
+    ]
+    if unauthorized:
+        return False, "PPL source 包含未授权索引"
+    return True, ""
+
+
+def enforce_gid_permission(ppl: str, allowed_gids,
+                          host: str = ES_HOST, port: int = ES_PORT,
                           user: str = None, password: str = None,
                           start_time: str = None, end_time: str = None,
-                           skip_gid_injection: bool = False):
+                           skip_gid_injection: bool = False,
+                           requested_gid: str = None):
     """
     PPL 执行前的强制权限过滤（L1 和 L2 通用入口）。
 
@@ -396,16 +443,24 @@ def enforce_gid_permission(ppl: str, allowed_gids,
 
     allowed = normalize_allowed_gids(allowed_gids)
     specified = extract_ppl_gids(ppl)
-    denied = [g for g in specified if g not in allowed]
+    requested = None if is_gid_empty(requested_gid) else str(requested_gid).strip()
+    if not skip_gid_injection:
+        denied = [g for g in specified if g not in allowed]
+        if requested and requested not in allowed:
+            return ppl, build_denied_message(requested, allowed, l2=True)
+        if denied:
+            return ppl, build_denied_message(denied, allowed, l2=True)
 
-    if denied:
-        return ppl, build_denied_message(denied, allowed, l2=True)
-
-    if not specified and not skip_gid_injection:
+    # 工具参数或用户原文提取出的 gid 优先于模型生成结果；
+    # 即使模型漏写或写入了其他合法 gid，也必须追加精确约束。
+    if requested and requested not in specified:
+        ppl = inject_gid_condition(ppl, [requested])
+        specified = [requested] + specified
+    elif not specified and not skip_gid_injection:
         ppl = inject_gid_condition(ppl, allowed)
 
     # 决定 specific_gid：LLM/PPL 声明了 gid 则用第一个；未声明则为 None（探测整个白名单）
-    specific_gid = specified[0] if specified else None
+    specific_gid = requested or (specified[0] if specified else None)
 
     # 索引层收窄（无论是否已声明 gid）
     ppl = restrict_source_indices(
@@ -427,7 +482,7 @@ def enforce_gid_permission(ppl: str, allowed_gids,
     return ppl, None
 
 
-def check_index_existence(gid, allowed_gids, host: str = "192.168.100.45", port: int = 9200,
+def check_index_existence(gid, allowed_gids, host: str = ES_HOST, port: int = ES_PORT,
                           user: str = None, password: str = None, start_time: str = None, end_time: str = None,
                            skip_gid_injection: bool = False):
     """
@@ -435,8 +490,7 @@ def check_index_existence(gid, allowed_gids, host: str = "192.168.100.45", port:
     不依赖 PPL 文本，直接基于 gid 和时间范围探测。
     
     探测策略：
-    - 如果用户提供了具体日期，则探测具体日期的索引（如 log_g12345_fortigate_firewall-2026.03.26）
-    - 如果未提供日期，则探测通配符索引（log_g12345_fortigate_firewall-*）
+    - 无论时间范围如何，都探测 gid 对应的全部 YAML 索引组合
 
     Args:
         skip_gid_injection: 是否跳过 gid 条件注入（管理员有 allowed_gids 时使用）
@@ -448,26 +502,23 @@ def check_index_existence(gid, allowed_gids, host: str = "192.168.100.45", port:
     if not allowed:
         return {}, False, None  # 无白名单，无法探测
 
-    # 动态构造时间后缀：有具体日期则带日期，否则用通配符
-    time_suffix = None
-    if start_time:
-        st = str(start_time).strip()
-        # 匹配 YYYY-MM-DD 或 YYYY-MM-DDTHH:MM:SS 格式
-        if re.match(r'^\d{4}-\d{2}-\d{2}', st):
-            time_suffix = st.replace('-', '.')[:10]  # 转为 ES 索引日期格式 2026.03.26
-
     is_specific = gid and str(gid).strip() and str(gid).strip() not in _GID_EMPTY_VALUES
     error_msg = None
 
     if is_specific:
         # 情况 1：用户指定了具体 gid
         gid_str = str(gid).strip()
-        # 构造完整索引名用于探测（带 gid + 日期）
-        idx_name = f"log_g{gid_str}_fortigate_firewall-{time_suffix if time_suffix else '*'}"
-        exists = _check_index_exists(idx_name, host, port, user, password)
+        candidates = build_index_names(gid_str)
+        valid_indices = [
+            idx for idx in candidates
+            if _check_index_exists(idx, host, port, user, password)
+        ]
+        exists = bool(valid_indices)
         index_info = {
             "gids_probed": [gid_str],
-            "pattern": idx_name,
+            "patterns_probed": candidates,
+            "valid_indices": valid_indices,
+            "pattern": ", ".join(candidates),
             "exists": exists
         }
         if not exists:
@@ -476,12 +527,18 @@ def check_index_existence(gid, allowed_gids, host: str = "192.168.100.45", port:
         # 情况 2：未指定 gid，探测白名单每个 gid
         gids_exist = []
         gids_not_exist = []
-        patterns_probed = []  # 记录每个 gid 实际探测的索引模式（含日期）
+        patterns_probed = []
+        valid_indices = []
         for g in allowed:
-            idx_name = f"log_g{g}_fortigate_firewall-{time_suffix if time_suffix else '*'}"
-            patterns_probed.append(idx_name)
-            if _check_index_exists(idx_name, host, port, user, password):
+            candidates = build_index_names(g)
+            patterns_probed.extend(candidates)
+            valid_for_gid = [
+                idx for idx in candidates
+                if _check_index_exists(idx, host, port, user, password)
+            ]
+            if valid_for_gid:
                 gids_exist.append(g)
+                valid_indices.extend(valid_for_gid)
             else:
                 gids_not_exist.append(g)
 
@@ -489,7 +546,7 @@ def check_index_existence(gid, allowed_gids, host: str = "192.168.100.45", port:
             "gids_probed": list(allowed),
             "patterns_probed": patterns_probed,  # 完整记录每个 gid 的探测模式
             "pattern": ", ".join(patterns_probed),  # 用逗号分隔的字符串形式（用于展示）
-            "time_suffix": time_suffix,  # 时间后缀（具体日期或 None）
+            "valid_indices": valid_indices,
             "gids_with_data": gids_exist,
             "gids_without_data": gids_not_exist,
             "exists": len(gids_exist) > 0

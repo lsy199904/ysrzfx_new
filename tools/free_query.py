@@ -21,10 +21,30 @@ import contextvars
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
-from tools.common_config import query_es, ES_AUTH_USER, ES_AUTH_PASSWORD, ES_HOST, ES_PORT
+from tools.common_config import (
+    query_es,
+    ES_AUTH_USER,
+    ES_AUTH_PASSWORD,
+    ES_HOST,
+    ES_PORT,
+    extract_gid_from_text,
+)
+from tools.index_config import INDEX_SOURCE_PATTERN
 from tools.tool_base import ToolCacheManager, CompressionConfig, request_ctx
-from tools.ppl_guard import enforce_gid_permission
+from tools.ppl_guard import enforce_gid_permission, extract_ppl_gids, is_gid_empty
 from utils.log_compressor import LogCompressor, generate_summary_statistics, format_summary_text
+from config import (
+    COMPRESSION_MAX_RETURN_DATA,
+    COMPRESSION_MAX_TOKENS,
+    COMPRESSION_THRESHOLD,
+    FREE_QUERY_MAX_ATTEMPTS,
+    CACHE_TOOL_TTL,
+    LLM_API_KEY,
+    LLM_BASE_URL,
+    LLM_MAX_REQUEST_TOKENS,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+)
 
 
 def _run_async(coro):
@@ -53,13 +73,10 @@ def _run_async(coro):
 
 # 压缩配置（与其他工具统一）
 COMPRESSION_CONFIG = CompressionConfig(
-    threshold=3,
-    max_tokens=2000,
-    max_return_data=3,
+    threshold=COMPRESSION_THRESHOLD,
+    max_tokens=COMPRESSION_MAX_TOKENS,
+    max_return_data=COMPRESSION_MAX_RETURN_DATA,
 )
-
-# 固定的数据源前缀
-BASE_INDEX_PATTERN = "log_g*_fortigate_firewall-*"
 
 # L1 场景引导问题示例（按场景分类）
 L1_GUIDE_QUESTIONS = {
@@ -81,7 +98,7 @@ class FreeQueryInput(BaseModel):
 
 def _generate_date_range(start_date_str: str, end_date_str: str) -> tuple:
     """
-    根据时间范围生成具体的索引列表
+    保留旧函数接口；新索引不按日期拆分。
     
     Returns:
         tuple: (index_list_str, single_day_index)
@@ -90,25 +107,16 @@ def _generate_date_range(start_date_str: str, end_date_str: str) -> tuple:
         start_dt = datetime.strptime(start_date_str, '%Y-%m-%d')
         end_dt = datetime.strptime(end_date_str, '%Y-%m-%d')
     except ValueError:
-        return BASE_INDEX_PATTERN, None
+        return INDEX_SOURCE_PATTERN, None
     
-    indices = []
-    current_dt = start_dt
-    while current_dt <= end_dt:
-        index_name = f"log_g*_fortigate_firewall-{current_dt.strftime('%Y.%m.%d')}"
-        indices.append(index_name)
-        current_dt += timedelta(days=1)
-    
-    index_list = ",".join(indices) if indices else BASE_INDEX_PATTERN
-    single_day = indices[0] if len(indices) == 1 else None
-    return index_list, single_day
+    return INDEX_SOURCE_PATTERN, None
 
 
 def _apply_index_date_pruning(ppl_query: str, start_date: str = None, end_date: str = None) -> str:
     """
-    将普通索引 pattern 转换为带日期的 pattern，实现 ES 索引层面的时间剪枝
+    保留固定索引 pattern；日期通过 @timestamp_cst 条件过滤。
     
-    从 PPL 中提取 @timestamp_cst 过滤条件，或使用传入的日期参数生成对应的索引列表
+    从 PPL 中提取 @timestamp_cst 过滤条件，或使用传入的日期参数辅助校验时间范围
     """
     print("开始应用索引日期剪枝")
     
@@ -123,43 +131,10 @@ def _apply_index_date_pruning(ppl_query: str, start_date: str = None, end_date: 
     end_date_str = le_match.group(1) if le_match else end_date
     
     if not start_date_str and not end_date_str:
-        print("未找到时间过滤条件，跳过索引剪枝")
+        print("未找到时间过滤条件，保留固定索引")
         return ppl_query
     
-    # 生成索引列表
-    if start_date_str and end_date_str:
-        index_list, single_day = _generate_date_range(start_date_str, end_date_str)
-        if single_day:
-            print(f"单日查询，使用索引：{single_day}")
-            index_list = single_day
-        else:
-            print(f"多日查询，使用具体索引列表：{index_list}")
-    elif start_date_str:
-        index_list = f"log_g*_fortigate_firewall-{start_date_str.replace('-', '.')}"
-        print(f"单日查询，使用索引：{index_list}")
-    elif end_date_str:
-        index_list = f"log_g*_fortigate_firewall-{end_date_str.replace('-', '.')}"
-        print(f"单日查询，使用索引：{index_list}")
-    else:
-        return ppl_query
-    
-    # 替换 source 中的索引 pattern
-    if '`' in ppl_query:
-        ppl_query = re.sub(
-            r"search\s+source=`[^`]+`",
-            f"search source=`{index_list}`",
-            ppl_query,
-            count=1
-        )
-    else:
-        ppl_query = re.sub(
-            r"(search\s+source=)[^\s|]+",
-            rf"\1`{index_list}`",
-            ppl_query,
-            count=1
-        )
-    
-    print(f"剪枝后 PPL: {ppl_query[:200]}...")
+    print(f"保留固定索引：{INDEX_SOURCE_PATTERN}，日期由时间条件过滤")
     return ppl_query
 
 
@@ -211,14 +186,8 @@ def generate_ppl_by_llm(
 - 用户指定结束日期：{actual_end_date}
 
 【数据源】
-- 基础索引模式：`log_g*_fortigate_firewall-*`
-- 【重要】为了实现索引层面的时间剪枝，必须根据用户问题中的时间范围，使用带日期的索引 pattern：
-  - 单日查询：使用 `log_g*_fortigate_firewall-YYYY.MM.DD*`，例如 `log_g*_fortigate_firewall-2026.06.02*`
-  - 多日查询：使用通配符范围，例如 `log_g*_fortigate_firewall-{{2026.06.01..2026.06.07}}*`
-  - 当用户说"今天"且只查单日时，索引 pattern 应为 `log_g*_fortigate_firewall-{today}*` → 实际生成如 `log_g*_fortigate_firewall-2026.06.02*`
-  - 示例：查询"今天"的登录记录 → `search source=`log_g*_fortigate_firewall-2026.06.02*``
-  - 示例：查询"最近 7 天" → `search source=`log_g*_fortigate_firewall-{{2026.05.27..2026.06.02}}*``
-- 注意：带日期的索引 pattern 可以实现 ES 层面的索引剪枝，大幅提升查询性能
+- 基础索引模式：`{INDEX_SOURCE_PATTERN}`
+- 索引名称固定，不包含日期；所有日期范围必须通过 `@timestamp_cst` 条件过滤
 
 【常见日志类型和字段】
 - 登录日志：subtype='system', action='login', status='failed', reason, srcip, remip, user（仅登录/VPN日志有remip）
@@ -247,7 +216,7 @@ def generate_ppl_by_llm(
 
 【PPL 语法示例】
 - 单日登录登出查询：
-  search source=`log_g*_fortigate_firewall-2026.06.08*`
+  search source=`{INDEX_SOURCE_PATTERN}`
   | where @timestamp_cst >= '2026-06-08 00:00:00' and @timestamp_cst <= '2026-06-08 23:59:59'
   | where @gid = '12345'
   | where (action = 'login' or action = 'logout')
@@ -256,7 +225,7 @@ def generate_ppl_by_llm(
   | head 100
 
 - 统计查询：
-  search source=`log_g*_fortigate_firewall-2026.06.08*`
+  search source=`{INDEX_SOURCE_PATTERN}`
   | where @timestamp_cst >= '2026-06-08 00:00:00' and @timestamp_cst <= '2026-06-08 23:59:59'
   | where @gid = '12345'
   | where (action = 'login' or action = 'logout')
@@ -292,7 +261,7 @@ def generate_ppl_by_llm(
 
 【输出要求】
 - 只返回 PPL 查询语句本身，不要任何解释
-- PPL 必须以 `search source=`log_g*_fortigate_firewall-*`` 开头
+- PPL 必须以 `search source=`{INDEX_SOURCE_PATTERN}`` 开头
 - 必须包含时间过滤条件（用户未指定时使用默认当月 1 号）
 - 必须包含 `| head 100` 限制返回条数
 {error_hint}
@@ -302,11 +271,11 @@ def generate_ppl_by_llm(
         model = ChatOpenAI(
             streaming=False,
             verbose=False,
-            openai_api_key='not empty',
-            openai_api_base='http://10.180.158.20:18080/v1',
-            model_name='Qwen/Qwen3-32B',
-            temperature=0.1,
-            max_tokens=2000
+            openai_api_key=LLM_API_KEY,
+            openai_api_base=f'{LLM_BASE_URL}/v1',
+            model_name=LLM_MODEL,
+            temperature=LLM_TEMPERATURE,
+            max_tokens=LLM_MAX_REQUEST_TOKENS
         )
         prompt_text = f"{system_prompt}\n\n用户问题：{user_problem}"
         print(f"[FREE_QUERY] [LLM] 请求长度: {len(prompt_text)} 字符")
@@ -330,13 +299,13 @@ def generate_ppl_by_llm(
         # 【关键修复】LLM 返回空 PPL 时，使用默认查询回退
         if not ppl_query:
             print(f"[FREE_QUERY] [WARN] LLM 返回了空 PPL，使用默认查询回退")
-            ppl_query = f"search source=`{BASE_INDEX_PATTERN}`\n| fields @timestamp_cst, msg, subtype, action\n| head 100"
+            ppl_query = f"search source=`{INDEX_SOURCE_PATTERN}`\n| fields @timestamp_cst, msg, subtype, action\n| head 100"
         
         return ppl_query
     
     except Exception as e:
         print(f"LLM 生成 PPL 失败：{e}")
-        return f"search source=`{BASE_INDEX_PATTERN}`\n| fields @timestamp_cst, msg, subtype, action\n| head 100"
+        return f"search source=`{INDEX_SOURCE_PATTERN}`\n| fields @timestamp_cst, msg, subtype, action\n| head 100"
 
 
 def _normalize_ppl(ppl_query: str) -> str:
@@ -349,11 +318,20 @@ def _normalize_ppl(ppl_query: str) -> str:
     # 【防御性检查】空查询直接返回默认查询
     if not ppl_query or not ppl_query.strip():
         print(f"[FREE_QUERY] [WARN] _normalize_ppl 收到空 PPL，使用默认查询")
-        return f"search source=`{BASE_INDEX_PATTERN}`\n| fields @timestamp_cst, msg, subtype, action\n| head 100"
+        return f"search source=`{INDEX_SOURCE_PATTERN}`\n| fields @timestamp_cst, msg, subtype, action\n| head 100"
     
     # 确保以 search source= 开头
     if not ppl_query.startswith("search source="):
-        ppl_query = f"search source=`{BASE_INDEX_PATTERN}`\n{ppl_query}"
+        ppl_query = f"search source=`{INDEX_SOURCE_PATTERN}`\n{ppl_query}"
+
+    # 自由查询不允许访问任意数据源；统一收敛到新的日志索引模式。
+    ppl_query = re.sub(
+        r"search\s+source=(?:`[^`]+`|[^\s|]+)",
+        f"search source=`{INDEX_SOURCE_PATTERN}`",
+        ppl_query,
+        count=1,
+        flags=re.IGNORECASE,
+    )
     
     # 确保有时间过滤
     has_time_filter = (
@@ -473,13 +451,19 @@ def free_query_request(
             "error": "用户问题不能为空",
             "suggestion": "请描述您想查询的日志内容，例如：'今天有哪些登录失败记录'"
         }, ensure_ascii=False)
-    
+
+    # 工具参数可能因模型提取不完整而为空；用户原文中的 gid 仍必须作为约束生效。
+    if is_gid_empty(gid):
+        gid = extract_gid_from_text(user_problem)
+
     # 【数据权限】从 contextvars 获取 gid_scope：入口校验 gid 参数 + 缓存按账号隔离
     from tools.tool_base import request_ctx
-    from tools.ppl_guard import is_gid_empty, check_gid_allowed, build_denied_result
+    from tools.ppl_guard import check_gid_allowed, build_denied_result
     gid_scope = request_ctx.get()
     allowed_gids = gid_scope.get("allowed_gids") if gid_scope else None
-    if allowed_gids is not None and not is_gid_empty(gid) and not check_gid_allowed(gid, allowed_gids):
+    is_admin = bool(gid_scope and gid_scope.get("is_admin", False))
+    if (allowed_gids is not None and not is_admin
+            and not is_gid_empty(gid) and not check_gid_allowed(gid, allowed_gids)):
         print(f"[FREE_QUERY] [GID_GUARD] 越权拦截：gid={gid}，白名单：{allowed_gids}")
         return build_denied_result(gid, allowed_gids)
 
@@ -497,6 +481,9 @@ def free_query_request(
         "ppl_query": ppl_query,
         "start_date": start_date,
         "end_date": end_date,
+        "gid": gid,
+        "is_admin": is_admin,
+        "index_source_pattern": INDEX_SOURCE_PATTERN,
         "login_account": login_account,  # 按账号隔离缓存
         "allowed_gids_hash": allowed_gids_hash,  # 按权限范围隔离缓存
     }
@@ -525,7 +512,7 @@ def free_query_request(
     print(f"{'='*60}")
     
     # 重试机制：最多 3 次
-    max_attempts = 3
+    max_attempts = FREE_QUERY_MAX_ATTEMPTS
     last_error = None
     attempt_steps = []
     
@@ -546,8 +533,11 @@ def free_query_request(
             # 规范化 PPL
             current_ppl = _normalize_ppl(current_ppl)
 
-            # 应用索引日期剪枝（必须在权限校验之前：剪枝会把 source 重写回
-            # log_g* 通配符形式，若先收窄索引会被剪枝覆盖掉）
+            # 模型未把用户问题中的 gid 写入 PPL 时，由代码补上精确过滤条件。
+            if gid and not is_gid_empty(gid) and not extract_ppl_gids(current_ppl):
+                current_ppl += f"\n| where @gid = '{gid}'"
+
+            # 规范化时间相关查询后，再执行权限收窄。
             current_ppl = _apply_index_date_pruning(current_ppl, start_date, end_date)
 
             # 【数据权限】L2 层权限校验：从 contextvars 获取 gid_scope，
@@ -558,7 +548,8 @@ def free_query_request(
                 allowed_gids = gid_scope.get("allowed_gids") if gid_scope else None
                 if allowed_gids is not None:
                     current_ppl, denied_msg = enforce_gid_permission(current_ppl, allowed_gids,
-                        host=ES_HOST, port=ES_PORT, user=ES_AUTH_USER, password=ES_AUTH_PASSWORD)
+                        host=ES_HOST, port=ES_PORT, user=ES_AUTH_USER, password=ES_AUTH_PASSWORD,
+                        requested_gid=gid, skip_gid_injection=is_admin)
                     if denied_msg:
                         # 区分越权拦截和索引不存在两种情况
                         from tools.ppl_guard import build_index_invalid_result
@@ -566,7 +557,7 @@ def free_query_request(
                             # 索引不存在 -> 返回 early-stop 结果
                             print(f"[FREE_QUERY] [GID_GUARD] 索引探测拦截：{denied_msg}")
                             denied_result = build_index_invalid_result(None, allowed_gids)
-                            return json.dumps(denied_result, ensure_ascii=False)
+                            return denied_result
                         else:
                             # 越权：返回固定模板提示 + suggestion（agent_chat 直推 final_answer）
                             denied_result = {
@@ -688,7 +679,7 @@ def free_query_request(
                     "attempt": attempt
                 }
                 try:
-                    _run_async(ToolCacheManager.save_cached_result("free_query", cache_params, cache_data, ttl=300))
+                    _run_async(ToolCacheManager.save_cached_result("free_query", cache_params, cache_data, ttl=CACHE_TOOL_TTL))
                     print(f"\n=== 缓存已保存 ===")
                 except Exception as e:
                     print(f"缓存保存失败：{e}")

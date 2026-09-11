@@ -6,6 +6,7 @@ Redis 数据检查工具
 """
 
 import asyncio
+from config import REDIS_DB, REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
 import sys
 import os
 
@@ -17,7 +18,12 @@ from utils.redis_manager import RedisManager
 async def inspect_redis():
     """检查 Redis 数据"""
     
-    mgr = RedisManager(host="localhost", port=6379, db=0)
+    mgr = RedisManager(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        db=REDIS_DB,
+        password=REDIS_PASSWORD,
+    )
     await mgr.initialize()
     
     print("\n" + "=" * 60)
@@ -26,8 +32,8 @@ async def inspect_redis():
     
     # 1. 基本信息
     print("\n【1. 连接信息】")
-    print(f"  主机：localhost:6379")
-    print(f"  数据库：DB 0")
+    print(f"  主机：{REDIS_HOST}:{REDIS_PORT}")
+    print(f"  数据库：DB {REDIS_DB}")
     
     # 2. 内存信息
     print("\n【2. 内存使用】")

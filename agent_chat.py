@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import copy 
+import hashlib
 from typing import Awaitable
 from venv import logger
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +23,23 @@ from fastapi import FastAPI, Request
 
 from utils.redis_manager import get_redis_manager, init_redis_manager
 from contextlib import asynccontextmanager
+from tools.index_config import INDEX_SOURCE_PATTERN
+from config import (
+    APP_HOST,
+    APP_LOG_LEVEL,
+    APP_PORT,
+    APP_TIMEOUT_KEEP_ALIVE,
+    CORS_ORIGINS,
+    LLM_API_KEY,
+    LLM_BASE_URL,
+    LLM_ENABLE_THINKING,
+    LLM_MAX_CONTEXT_TOKENS,
+    LLM_MAX_OUTPUT_TOKENS,
+    LLM_MIN_OUTPUT_TOKENS,
+    LLM_MODEL,
+    LLM_SAFETY_MARGIN,
+    LLM_TEMPERATURE,
+)
 
 async def get_redis_manager_instance():
     """获取 Redis 管理器实例（已在 lifespan 中初始化）"""
@@ -51,7 +69,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Chat Agent 接口", lifespan=lifespan)
 app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=CORS_ORIGINS,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
@@ -108,7 +126,7 @@ prompts = {
             "- free_query_request: 当用户自由查询日志、搜索特定记录、自定义条件查询时使用\n\n"
             "【free_query_request 专用规则】\n"
             "当选择 free_query_request 时，如果生成的PPL调用状态码返回200就不要继续调用了，只有不是200才继续调用，ppl_query 参数的生成规则如下：\n"
-            "1. PPL 必须以 `search source=`log_g*_fortigate_firewall-*`` 或 `search source=log_g*_fortigate_firewall-*` 开头\n"
+            f"1. PPL 必须以 `search source=`{INDEX_SOURCE_PATTERN}`` 或 `search source={INDEX_SOURCE_PATTERN}` 开头\n"
             "2. 时间过滤使用 @timestamp_cst 字段，格式：@timestamp_cst >= 'YYYY-MM-DD HH:MM:SS'\n"
             "3. IP 过滤使用 srcip、dstip、remip 等字段\n"
             "4. 用户过滤使用 user 字段\n"
@@ -233,12 +251,6 @@ prompts = {
 
 
 
-# Redis 配置
-REDIS_HOST = "localhost"
-REDIS_PORT = 6379
-REDIS_DB = 0
-SESSION_TTL = 3600  # 会话过期时间（秒），默认 1 小时
-
 # 全局会话存储（内存缓存，同时同步到 Redis）
 user_sessions = {}
 session_lock = asyncio.Lock()
@@ -344,6 +356,11 @@ async def chat_agent_stream(request: Request):
             """
             yield json.dumps({"error": "session_id和user_input为必填参数"}, ensure_ascii=False) + "\n\n"
         return EventSourceResponse(error_iterator())
+
+    # Redis 和进程内会话均按账号隔离，避免不同用户复用同一个 session_id 串读历史。
+    scoped_session_id = hashlib.sha256(
+        f"{login_account}\0{session_id}".encode("utf-8")
+    ).hexdigest()
 
     def _is_chinese(text: str) -> bool:
         """
@@ -451,10 +468,10 @@ async def chat_agent_stream(request: Request):
         # Token 预算检查 & 动态 max_tokens 计算
         # ============================================
         # 【当前模型配置】32K 上下文 = 32768 tokens
-        MODEL_MAX_TOKENS = 128000
-        SAFETY_MARGIN = 2000      # 安全余量（给工具描述、中间过程等）
-        MIN_OUTPUT_TOKENS = 1000  # 最小输出 token 保障
-        MAX_OUTPUT_TOKENS = 50000 # 最大输出 token 上限（保守值）
+        MODEL_MAX_TOKENS = LLM_MAX_CONTEXT_TOKENS
+        SAFETY_MARGIN = LLM_SAFETY_MARGIN
+        MIN_OUTPUT_TOKENS = LLM_MIN_OUTPUT_TOKENS
+        MAX_OUTPUT_TOKENS = LLM_MAX_OUTPUT_TOKENS
         
         # 构建完整 prompt 估算总长度
         try:
@@ -494,40 +511,27 @@ async def chat_agent_stream(request: Request):
                 
         except Exception as e:
             print(f"[Token Budget] Token 估算失败，使用默认值：{e}")
-            max_tokens = 15000
+            max_tokens = min(LLM_MAX_OUTPUT_TOKENS, 15000)
         
         print(f"[Token Budget] 最终 max_tokens = {max_tokens}")
-        
-        # 当前模型配置
-        model_name = "Qwen/Qwen3-32B"
-        base_url = "http://10.180.158.23:18080"
-        openai_api_key = 'not empty'
-        # 当前上下文 64K（未启用）
-        # model_name = "Qwen/Qwen3.6-27B"
-        # base_url = "http://10.180.158.19/qwen36-27b" 
-        # openai_api_key = 'not empty'
-        # 当前上下文 128K（未启用）
-        # model_name = "Qwen/Qwen3.6-35B-A3B"
-        # base_url = "http://10.180.158.19/qwen36-35b-a3b" 
-        # openai_api_key = 'not empty'
         
         # 初始化模型（使用动态计算的 max_tokens）
         model = ChatOpenAI(
             streaming=True,
             verbose=False,  # 关闭详细日志
             callbacks=[callback],  # 绑定当前请求的独立回调
-            openai_api_key=openai_api_key,  # 自定义模型服务非空占位
-            openai_api_base=f'{base_url}/v1',  # 模型服务地址
-            model_name=model_name,
-            temperature=0,  # 确定性输出，减少随机性
+            openai_api_key=LLM_API_KEY,
+            openai_api_base=f'{LLM_BASE_URL}/v1',
+            model_name=LLM_MODEL,
+            temperature=LLM_TEMPERATURE,
             max_tokens=max_tokens,  # ← 动态计算，不再写死
             # 【修复】通过 extra_body 传递 chat_template_kwargs 以兼容不同的 Qwen3 部署方式
             # vLLM 部署使用 chat_template_kwargs；某些自定义服务使用 enable_thinking
             # 两者都放在 extra_body 里，OpenAI client 不会校验，由服务端决定用哪个
             model_kwargs={
                 "extra_body": {
-                    "enable_thinking": False,
-                    "chat_template_kwargs": {"enable_thinking": False}
+                    "enable_thinking": LLM_ENABLE_THINKING,
+                    "chat_template_kwargs": {"enable_thinking": LLM_ENABLE_THINKING}
                 }
             }
         )
@@ -1022,18 +1026,17 @@ async def chat_agent_stream(request: Request):
         await task
 
     # 返回流式响应
-    return EventSourceResponse(agent_chat_iterator(user_input, session_id))
+    return EventSourceResponse(agent_chat_iterator(user_input, scoped_session_id))
 
 
 if __name__ == '__main__':
     # 启动UVicorn服务：绑定127.0.0.1:20005，日志级别info
     uvicorn.run(
         app,
-        #host='192.168.101.110',
-        host='0.0.0.0',
-        port=8000,
-        log_level='info',
-        timeout_keep_alive=60   
+        host=APP_HOST,
+        port=APP_PORT,
+        log_level=APP_LOG_LEVEL,
+        timeout_keep_alive=APP_TIMEOUT_KEEP_ALIVE
     )
 
     # uvicorn.run(

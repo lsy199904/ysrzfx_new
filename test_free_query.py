@@ -1,10 +1,11 @@
 import json
 import requests
 import time
+from config import APP_HOST, APP_PORT
 
 def call_agent_stream_api(session_id, user_input):
     start_time = time.time()
-    url = "http://127.0.0.1:8000/agentchat"
+    url = f"http://{APP_HOST}:{APP_PORT}/agentchat"
     headers = {"Content-Type": "application/json"}
     payload = {
         "session_id": session_id,
@@ -92,7 +93,7 @@ def call_agent_stream_api_with_auth(session_id, user_input, login_account="test"
         allowed_gids: 允许查询的 gid 列表，不传则默认为 ["12345", "19936"]
     """
     start_time = time.time()
-    url = "http://127.0.0.1:8000/agentchat"
+    url = f"http://{APP_HOST}:{APP_PORT}/agentchat"
     headers = {"Content-Type": "application/json"}
     payload = {
         "session_id": session_id,

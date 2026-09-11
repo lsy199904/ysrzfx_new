@@ -19,7 +19,7 @@ Redis Manager - 统一的 Redis 管理器
     history = await redis_mgr.get_session(session_id)
     
     # 工具缓存
-    await redis_mgr.cache_tool_result("brute_force", params_hash, result, ttl=300)
+    await redis_mgr.cache_tool_result("brute_force", params_hash, result, ttl=CACHE_TOOL_TTL)
     cached = await redis_mgr.get_cached_tool_result("brute_force", params_hash)
     
     # 分布式锁
@@ -41,6 +41,18 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 import redis  # 使用同步客户端，避免事件循环问题
+from config import (
+    CACHE_TOOL_TTL,
+    REDIS_CONNECT_TIMEOUT,
+    REDIS_DB,
+    REDIS_HOST,
+    REDIS_MAX_CONNECTIONS,
+    REDIS_PASSWORD,
+    REDIS_PING_TIMEOUT,
+    REDIS_PORT,
+    REDIS_SOCKET_TIMEOUT,
+    SESSION_TTL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +73,8 @@ class RedisManager:
     
     # 默认过期时间（秒）
     DEFAULT_TTL = {
-        "session": 3600,        # 会话 1 小时
-        "cache_tool": 300,      # 工具缓存 5 分钟
+        "session": SESSION_TTL,
+        "cache_tool": CACHE_TOOL_TTL,
         "cache_query": 600,     # 查询缓存 10 分钟
         "ratelimit": 60,        # 限流 1 分钟
         "lock": 30,             # 锁超时 30 秒
@@ -70,15 +82,15 @@ class RedisManager:
     
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 6379,
-        db: int = 0,
-        password: Optional[str] = None,
+        host: str = REDIS_HOST,
+        port: int = REDIS_PORT,
+        db: int = REDIS_DB,
+        password: Optional[str] = REDIS_PASSWORD,
         decode_responses: bool = True,
-        socket_timeout: float = 5.0,
-        socket_connect_timeout: float = 5.0,
+        socket_timeout: float = REDIS_SOCKET_TIMEOUT,
+        socket_connect_timeout: float = REDIS_CONNECT_TIMEOUT,
         retry_on_timeout: bool = True,
-        max_connections: int = 50,
+        max_connections: int = REDIS_MAX_CONNECTIONS,
     ):
         """
         初始化 Redis 管理器
@@ -165,7 +177,7 @@ class RedisManager:
             loop = asyncio.get_event_loop()
             await asyncio.wait_for(
                 loop.run_in_executor(None, self.client.ping),
-                timeout=2.0
+                timeout=REDIS_PING_TIMEOUT
             )
         except Exception:
             logger.warning("Redis 连接失效，尝试重新初始化...")
@@ -789,10 +801,10 @@ def get_redis_manager() -> RedisManager:
 
 
 async def init_redis_manager(
-    host: str = "localhost",
-    port: int = 6379,
-    db: int = 0,
-    password: Optional[str] = None,
+    host: str = REDIS_HOST,
+    port: int = REDIS_PORT,
+    db: int = REDIS_DB,
+    password: Optional[str] = REDIS_PASSWORD,
 ) -> RedisManager:
     """初始化全局 Redis 管理器"""
     global _redis_manager

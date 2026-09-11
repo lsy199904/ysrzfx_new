@@ -23,13 +23,15 @@ from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig
+from tools.index_config import INDEX_SOURCE_PATTERN
+from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
 from tools.ip_trace import ip_trace_request, build_trace_window
 
 logger = logging.getLogger(__name__)
 
 
 # PPL 查询模板
-PPL_TEMPLATE = """search source=log_g*_fortigate_firewall-*
+PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
 | where type='utm' and subtype='ips'
 | where NOT (cidrmatch(srcip, "10.0.0.0/8") AND cidrmatch(dstip, "10.0.0.0/8"))
 | where level='alert'
@@ -43,9 +45,9 @@ PPL_TEMPLATE = """search source=log_g*_fortigate_firewall-*
 
 # 自定义压缩配置（可选，不传则使用默认配置）
 COMPRESSION_CONFIG = CompressionConfig(
-    threshold=3,
-    max_tokens=2000,
-    max_return_data=3,
+    threshold=COMPRESSION_THRESHOLD,
+    max_tokens=COMPRESSION_MAX_TOKENS,
+    max_return_data=COMPRESSION_MAX_RETURN_DATA,
 )
 
 
