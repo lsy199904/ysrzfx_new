@@ -62,6 +62,15 @@ _PPL_SOURCE_RE = re.compile(
 )
 
 
+def _clean_source_list(source_text: str) -> str:
+    """清理 source 列表中的空项，兼容 Python 3.11。"""
+    return ",".join(
+        part.strip()
+        for part in source_text.split(",")
+        if part.strip()
+    )
+
+
 def _check_index_exists(index_name: str, host: str = ES_HOST, port: int = ES_PORT, user: str = None, password: str = None) -> bool:
     """
     检查索引是否存在（带缓存）
@@ -357,17 +366,17 @@ def restrict_source_indices(ppl: str, allowed_gids, specific_gid: str = None,
     # 某个组合没有有效索引时，清理 source 列表中的空项。
     result = re.sub(
         r"(?i)(search\s+source=`)([^`]+)(`)",
-        lambda match: f"{match.group(1)}{','.join(
-            part.strip() for part in match.group(2).split(',') if part.strip()
-        )}{match.group(3)}",
+        lambda match: (
+            match.group(1)
+            + _clean_source_list(match.group(2))
+            + match.group(3)
+        ),
         result,
         count=1,
     )
     result = re.sub(
         r"(?i)(search\s+source=)(?!`)([^\s|]+)",
-        lambda match: f"{match.group(1)}{','.join(
-            part.strip() for part in match.group(2).split(',') if part.strip()
-        )}",
+        lambda match: match.group(1) + _clean_source_list(match.group(2)),
         result,
         count=1,
     )
