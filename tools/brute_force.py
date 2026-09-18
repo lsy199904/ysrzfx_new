@@ -30,27 +30,23 @@ from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESS
 from tools.ip_trace import ip_trace_request, build_trace_window
 
 
-def _utc_to_cst(timestamp_str: str) -> str:
-    """将 ES 返回的 UTC 时间字符串转换为东八区（CST）时间字符串。
-
-    ES 的 @timestamp 字段以 UTC 存储，如 '2026-03-26T02:01:55.000Z'。
-    由于 build_trace_window + build_ppl_query 链路期望输入为 CST 时间，
-    此处将 UTC 转换回 CST，确保溯源时间窗口计算正确。
-    """
+def _normalize_attack_time(timestamp_str: str) -> str:
+    """将攻击时间规范为东八区时间，避免对已转换的时间重复加 8 小时。"""
     try:
         ts_str = str(timestamp_str).strip()
-        # 移除可能的时区后缀
-        ts_clean = ts_str.replace('Z', '').replace('+00:00', '').strip()
+        is_explicit_utc = ts_str.endswith("Z") or ts_str.endswith("+00:00")
+        ts_clean = ts_str.removesuffix("Z").removesuffix("+00:00").strip()
         for fmt in ('%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S'):
             try:
-                dt_utc = datetime.strptime(ts_clean, fmt)
-                dt_cst = dt_utc + timedelta(hours=8)
-                return dt_cst.strftime('%Y-%m-%d %H:%M:%S')
+                parsed = datetime.strptime(ts_clean, fmt)
+                if is_explicit_utc:
+                    parsed += timedelta(hours=8)
+                return parsed.strftime('%Y-%m-%d %H:%M:%S')
             except ValueError:
                 continue
         return timestamp_str
     except Exception as e:
-        logger.warning(f"[Trace] UTC 转 CST 失败: {e}，返回原值: {timestamp_str}")
+        logger.warning(f"[Trace] 攻击时间规范化失败: {e}，返回原值: {timestamp_str}")
         return timestamp_str
 
 logger = logging.getLogger(__name__)
@@ -141,10 +137,9 @@ def _get_first_attack_time(raw_result: dict) -> str:
         attack_time = first_record.get("@timestamp")
 
         if attack_time:
-            # 【修复】ES 返回的是 UTC 时间，需转换为 CST 供后续链路使用
-            cst_time = _utc_to_cst(attack_time)
-            logger.info(f"[Trace] 提取到最早攻击时间（UTC→CST）: {attack_time} → {cst_time}")
-            return cst_time
+            normalized_time = _normalize_attack_time(attack_time)
+            logger.info(f"[Trace] 提取到最早攻击时间: {attack_time} → {normalized_time}")
+            return normalized_time
 
         logger.warning("[Trace] 未找到 @timestamp 字段，使用当前时间")
         return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -155,7 +150,7 @@ def _get_first_attack_time(raw_result: dict) -> str:
 
 
 def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str:
-    """【新增】提取指定 IP 的最早攻击时间（UTC → CST 转换）"""
+    """提取指定 IP 的最早攻击时间，并规范为东八区时间。"""
     try:
         data = raw_result.get("data", [])
         if not data:
@@ -172,10 +167,9 @@ def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str:
                     ip_first_time = t  # 不断覆盖，最后保留的是最早的
 
         if ip_first_time:
-            # 【修复】ES 返回的是 UTC 时间，需转换为 CST 供后续链路使用
-            cst_time = _utc_to_cst(ip_first_time)
-            logger.info(f"[Trace] IP {target_ip} 的最早攻击时间（UTC→CST）: {ip_first_time} → {cst_time}")
-            return cst_time
+            normalized_time = _normalize_attack_time(ip_first_time)
+            logger.info(f"[Trace] IP {target_ip} 的最早攻击时间: {ip_first_time} → {normalized_time}")
+            return normalized_time
 
         # 没找到该 IP 的记录，回退到全局最早时间
         logger.warning(f"[Trace] IP {target_ip} 在数据中未找到记录，回退到全局最早时间")
@@ -301,7 +295,7 @@ def brute_force_request(
         filter_user=filter_user,
         gid=gid,
         compression_config=COMPRESSION_CONFIG,
-        ip_field="attack_src",  # 暴力破解使用 attack_src 字段（由模板中 srcip 和 remip 计算得出）
+        ip_field="attack_src",  # attack_src 由 source.ip / destination.ip 计算得出
     )
     
     # 获取原始结果

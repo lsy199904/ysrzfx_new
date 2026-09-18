@@ -181,6 +181,7 @@ class ToolExecutor:
         # 可选的额外处理函数
         preprocess_hook: Callable = None,  # 在查询前处理参数
         postprocess_hook: Callable = None,  # 在返回前处理结果
+        cache_version: str = None,
     ):
         self.tool_name = tool_name
         self.ppl_template = ppl_template
@@ -191,6 +192,7 @@ class ToolExecutor:
         self.filter_user = filter_user
         self.gid = gid
         self.ip_field = ip_field
+        self.cache_version = cache_version
         # 数据权限上下文：优先使用显式传入，否则从 contextvars 自动获取
         self.gid_scope = gid_scope or (request_ctx.get() if request_ctx.get() else None)
         self.compression_config = compression_config or CompressionConfig()
@@ -283,6 +285,8 @@ class ToolExecutor:
             "login_account": login_account,  # 按账号隔离缓存
             "allowed_gids_hash": allowed_gids_hash,  # 按权限范围隔离缓存
         }
+        if self.cache_version:
+            cache_params["cache_version"] = self.cache_version
         
         try:
             # 【修复】使用安全异步运行器，确保 contextvars 正确传播
@@ -328,6 +332,8 @@ class ToolExecutor:
             "login_account": login_account,  # 按账号隔离缓存
             "allowed_gids_hash": allowed_gids_hash,  # 按权限范围隔离缓存
         }
+        if self.cache_version:
+            cache_params["cache_version"] = self.cache_version
         try:
             # 【修复】使用安全异步运行器
             self._run_async(ToolCacheManager.save_cached_result(self.tool_name, cache_params, cache_data, ttl=CACHE_TOOL_TTL))
@@ -694,7 +700,10 @@ class ToolExecutor:
             "data": final_data,
             "compression": compression_info
         }
-        self._save_cache(cache_data)
+        if http_status == 200 and not error_msg:
+            self._save_cache(cache_data)
+        else:
+            print(f"[{self.tool_name.upper()}] 查询失败，不缓存结果：http_status={http_status}")
         
         return json.dumps(final_result, ensure_ascii=False)
 

@@ -465,9 +465,8 @@ def build_graph_data(raw_data: dict) -> dict:
             _add_node(nodes_map, src_ip, "attacker", record, "ip")
 
         # 远程 IP / 目标 IP
-        rem_ip = _get_field(record, ["remip"])
-        dst_ip = _get_field(record, ["destination.ip", "dstip"])
-        target_ip = rem_ip or dst_ip
+        # 新 ECS 索引中 remip 映射为 destination.ip；remip 仅作旧数据兼容。
+        target_ip = _get_field(record, ["destination.ip", "dstip", "remip"])
         if target_ip:
             _add_node(nodes_map, target_ip, "host", record, "ip")
 
@@ -477,7 +476,7 @@ def build_graph_data(raw_data: dict) -> dict:
             _add_node(nodes_map, username, "user", record, "user", username)
 
         # 设备名
-        devname = _get_field(record, ["devname", "device"])
+        devname = _get_field(record, ["observer.name", "devname", "device"])
         if devname:
             _add_node(nodes_map, devname, "oss", record, "device", devname)
 
@@ -534,7 +533,7 @@ def build_graph_data(raw_data: dict) -> dict:
 
         # 提取关联的用户名和目标 IP
         username = _get_field(record, ["source.user.name", "user", "username", "account"])
-        target_ip = _get_field(record, ["remip"]) or _get_field(record, ["destination.ip", "dstip"])
+        target_ip = _get_field(record, ["destination.ip", "dstip", "remip"])
 
         # --- 登录状态 ---
         if parsed.get("entity_type") == "user" and username:
@@ -632,11 +631,10 @@ def build_graph_data(raw_data: dict) -> dict:
 
     for record in sorted_records:
         src_ip = _get_field(record, ["source.ip", "srcip"])
-        rem_ip = _get_field(record, ["remip"])
-        dst_ip = _get_field(record, ["destination.ip", "dstip"])
-        target_ip = rem_ip or dst_ip
+        # 新 ECS 索引中 remip 映射为 destination.ip；remip 仅作旧数据兼容。
+        target_ip = _get_field(record, ["destination.ip", "dstip", "remip"])
         username = _get_field(record, ["source.user.name", "user", "username", "account"])
-        devname = _get_field(record, ["devname", "device"])
+        devname = _get_field(record, ["observer.name", "devname", "device"])
         policy_id = _get_field(record, ["rule.id", "policyid"])
         action = _get_field(record, ["event.action", "action"])
         ts = record.get("@timestamp", "") or ""
@@ -885,13 +883,13 @@ def build_graph_data(raw_data: dict) -> dict:
             "action": _get_field(record, ["event.action", "action"]),
             "subtype": _get_field(record, ["fortinet.firewall.subtype", "subtype"]),
             "user": _get_field(record, ["source.user.name", "user", "username", "account"]),
-            "devname": _get_field(record, ["devname", "device"]),
+            "devname": _get_field(record, ["observer.name", "devname", "device"]),
             "msg": _get_field(record, ["message", "msg"]),
             "policyid": _get_field(record, ["rule.id", "policyid"]),
         }
         # 提取动作中文显示
-        if event["event.action", "action"]:
-            event["action_display"] = _parse_action_name(event["event.action", "action"])
+        if event["action"]:
+            event["action_display"] = _parse_action_name(event["action"])
         timeline.append(event)
     # 按时间戳升序排序
     timeline.sort(key=lambda x: x.get("timestamp", ""))
@@ -928,12 +926,10 @@ def build_graph_data(raw_data: dict) -> dict:
 # 通用溯源 PPL 模板
 # 【重要】仅保留 IP 基础过滤 + 关键字段筛选。
 # 时间条件由 build_ppl_query() 统一注入到 search 命令行。
-# 【字段对齐】必须与 brute_force.py:40 保持一致，Fortigate 索引中实际存在这些字段：
-#   @timestamp, source.user.name, attack_src, source.ip, remip, event.action, event.reason, message, fortinet.firewall.subtype, @gid, observer.name, rule.id
-# 【删除】以下字段在 Fortigate 索引中不存在，OpenSearch 会报 IllegalArgumentException：
-#   app, policyname, hostname, srcport, proto, service, dstport
+# 【字段对齐】这里只能使用当前 Fortigate 索引中已验证存在的 ECS 字段。
+# PPL 的 fields 命令引用未映射字段会让整个查询返回 HTTP 400。
 IP_TRACE_PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
-| fields @timestamp, source.ip, destination.ip, remip, event.action, event.reason, message, fortinet.firewall.subtype, fortinet.firewall.type, source.user.name, observer.name, rule.id, @gid, attack_src"""
+| fields @timestamp, source.ip, destination.ip, event.action, event.reason, message, fortinet.firewall.subtype, source.user.name, observer.name, rule.id, @gid"""
 
 
 # 溯源查询压缩配置
@@ -984,7 +980,8 @@ def ip_trace_request(
         filter_ip=ip,  # 同时传入 filter_ip 以便 ToolExecutor 处理
         gid=gid,
         compression_config=IP_TRACE_COMPRESSION_CONFIG,
-        ip_field=["source.ip", "attack_src"],  # 【修复】同时过滤 source.ip 和 attack_src，确保覆盖两种场景
+        ip_field=["source.ip", "destination.ip"],
+        cache_version="v2",
     )
     
     result = executor.execute()
@@ -1041,6 +1038,7 @@ def _build_trace_result(raw_result: str, ip: str, start_time: str, end_time: str
     """
     # 解析原始结果，提取 data 数组用于构建图数据
     graph_data = {}
+    raw_data = {}
     try:
         raw_data = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
         logger.info(f"[build_trace_result] raw_result 前 500 字符: {raw_result[:500]}")
@@ -1051,11 +1049,15 @@ def _build_trace_result(raw_result: str, ip: str, start_time: str, end_time: str
             # 【修复】构建图前先清洗 NaN/Infinity
             raw_data = _sanitize_nan(raw_data)
             graph_data = build_graph_data(raw_data)
-            app_logger.info(f"[build_trace_result] graph_data 构建结果: nodes={len(graph_data.get('nodes', []))}, edges={len(graph_data.get('edges', []))}")
+            logger.info(f"[build_trace_result] graph_data 构建结果: nodes={len(graph_data.get('nodes', []))}, edges={len(graph_data.get('edges', []))}")
         else:
-            app_logger.warning(f"[build_trace_result] raw_data 为空或 data 字段缺失/为空")
+            logger.warning(f"[build_trace_result] raw_data 为空或 data 字段缺失/为空")
     except Exception as e:
         logger.warning(f"[build_trace_result] 构建图数据失败：{e}", exc_info=True)
+
+    http_status = raw_data.get("http_status", 0) if isinstance(raw_data, dict) else 0
+    error = raw_data.get("error", "") if isinstance(raw_data, dict) else ""
+    status = "success" if http_status == 200 and not error else "error"
 
     # 【修复】整个返回结构清洗 NaN
     return _sanitize_nan({
@@ -1065,7 +1067,8 @@ def _build_trace_result(raw_result: str, ip: str, start_time: str, end_time: str
             "start_time": start_time,
             "end_time": end_time,
             "activities": raw_result,
-            "status": "success",
+            "status": status,
+            "error": error,
             "graph_data": graph_data,
         }
     })
