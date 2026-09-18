@@ -114,14 +114,14 @@ def _generate_date_range(start_date_str: str, end_date_str: str) -> tuple:
 
 def _apply_index_date_pruning(ppl_query: str, start_date: str = None, end_date: str = None) -> str:
     """
-    保留固定索引 pattern；日期通过 @timestamp_cst 条件过滤。
+    保留固定索引 pattern；日期通过 @timestamp 条件过滤。
     
-    从 PPL 中提取 @timestamp_cst 过滤条件，或使用传入的日期参数辅助校验时间范围
+    从 PPL 中提取 @timestamp 过滤条件，或使用传入的日期参数辅助校验时间范围
     """
     print("开始应用索引日期剪枝")
     
-    ge_pattern = r"@timestamp_cst\s*>=\s*'(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?'"
-    le_pattern = r"@timestamp_cst\s*<=\s*'(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?'"
+    ge_pattern = r"@timestamp\s*>=\s*'(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?'"
+    le_pattern = r"@timestamp\s*<=\s*'(\d{4}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?'"
     
     ge_match = re.search(ge_pattern, ppl_query)
     le_match = re.search(le_pattern, ppl_query)
@@ -166,7 +166,7 @@ def generate_ppl_by_llm(
     actual_start_date = start_date if start_date else first_day_of_month_str
     actual_end_date = end_date if end_date else today
     
-    default_date_filter = f"@timestamp_cst >= '{first_day_of_month_str} 00:00:00'"
+    default_date_filter = f"@timestamp >= '{first_day_of_month_str} 00:00:00'"
     
     error_hint = ""
     if previous_error:
@@ -187,29 +187,29 @@ def generate_ppl_by_llm(
 
 【数据源】
 - 基础索引模式：`{INDEX_SOURCE_PATTERN}`
-- 索引名称固定，不包含日期；所有日期范围必须通过 `@timestamp_cst` 条件过滤
+- 索引名称固定，不包含日期；所有日期范围必须通过 `@timestamp` 条件过滤
 
 【常见日志类型和字段】
-- 登录日志：subtype='system', action='login', status='failed', reason, srcip, remip, user（仅登录/VPN日志有remip）
-- VPN日志：subtype='vpn', msg='SSL user failed to logged in', srcip, remip, user
-- 账户操作：action='Add'/'Delete'/'password reset', cfgpath='user.local', user
-- IPS 告警：type='utm', subtype='ips', level='alert', attack, srcip, dstip, dstport, action, url（IPS日志没有remip字段！）
-- 系统事件：subtype='system', logdesc='Device rebooted'/'Device shutdown'/'Device initialized'
-- 通用字段：@timestamp_cst, srcip, dstip, user, action, msg, @gid, devname, subtype, logdesc, type, level, severity
+- 登录日志：fortinet.firewall.subtype='system', event.action='login', fortinet.firewall.status='failed', event.reason, source.ip, remip, source.user.name（仅登录/VPN日志有remip）
+- VPN日志：fortinet.firewall.subtype='vpn', message='SSL user failed to logged in', source.ip, remip, source.user.name
+- 账户操作：event.action='Add'/'Delete'/'password reset', fortinet.firewall.cfgpath='user.local', source.user.name
+- IPS 告警：fortinet.firewall.type='utm', fortinet.firewall.subtype='ips', log.level='alert', fortinet.firewall.attack, source.ip, destination.ip, destination.port, event.action, url.original（IPS日志没有remip字段！）
+- 系统事件：fortinet.firewall.subtype='system', rule.description='Device rebooted'/'Device shutdown'/'Device initialized'
+- 通用字段：@timestamp, source.ip, destination.ip, source.user.name, event.action, message, @gid, observer.name, fortinet.firewall.subtype, rule.description, fortinet.firewall.type, log.level, fortinet.firewall.severity
 
 【remip 字段注意事项】⚠️
-- remip 字段**只存在于登录日志和VPN日志中**（subtype='system' 或 subtype='vpn'）
-- IPS告警、网络攻击日志（type='utm', subtype='ips'）**没有 remip 字段**
-- 如果用户查询的是IPS/攻击类日志，请使用 srcip 和 dstip，不要使用 remip
-- 如果不确定日志类型，优先使用 srcip 字段
+- remip 字段**只存在于登录日志和VPN日志中**（fortinet.firewall.subtype='system' 或 fortinet.firewall.subtype='vpn'）
+- IPS告警、网络攻击日志（fortinet.firewall.type='utm', fortinet.firewall.subtype='ips'）**没有 remip 字段**
+- 如果用户查询的是IPS/攻击类日志，请使用 source.ip 和 destination.ip，不要使用 remip
+- 如果不确定日志类型，优先使用 source.ip 字段
 
 【PPL 语法】
-1. 时间过滤：@timestamp_cst >= 'YYYY-MM-DD HH:MM:SS' and @timestamp_cst <= 'YYYY-MM-DD HH:MM:SS'
-2. IP 过滤：srcip = 'x.x.x.x'（优先使用 srcip，仅在登录/VPN日志时使用 remip）
-3. 用户过滤：user = 'username'
+1. 时间过滤：@timestamp >= 'YYYY-MM-DD HH:MM:SS' and @timestamp <= 'YYYY-MM-DD HH:MM:SS'
+2. IP 过滤：source.ip = 'x.x.x.x'（优先使用 source.ip，仅在登录/VPN日志时使用 remip）
+3. 用户过滤：source.user.name = 'username'
 4. 设备组过滤：@gid = '设备组 ID'
 5. 字段选择：fields field1, field2, ...
-6. 排序：sort - @timestamp_cst（降序）
+6. 排序：sort - @timestamp（降序）
 7. 聚合：stats count() as cnt by field1, field2
 8. 限制条数：head N（限制返回 N 条记录）
 9. 条件过滤：| where 条件表达式（使用 and/or 连接）
@@ -217,18 +217,18 @@ def generate_ppl_by_llm(
 【PPL 语法示例】
 - 单日登录登出查询：
   search source=`{INDEX_SOURCE_PATTERN}`
-  | where @timestamp_cst >= '2026-06-08 00:00:00' and @timestamp_cst <= '2026-06-08 23:59:59'
+  | where @timestamp >= '2026-06-08 00:00:00' and @timestamp <= '2026-06-08 23:59:59'
   | where @gid = '12345'
-  | where (action = 'login' or action = 'logout')
-  | fields @timestamp_cst, action, user, srcip
-  | sort - @timestamp_cst
+  | where (event.action = 'login' or event.action = 'logout')
+  | fields @timestamp, event.action, source.user.name, source.ip
+  | sort - @timestamp
   | head 100
 
 - 统计查询：
   search source=`{INDEX_SOURCE_PATTERN}`
-  | where @timestamp_cst >= '2026-06-08 00:00:00' and @timestamp_cst <= '2026-06-08 23:59:59'
+  | where @timestamp >= '2026-06-08 00:00:00' and @timestamp <= '2026-06-08 23:59:59'
   | where @gid = '12345'
-  | where (action = 'login' or action = 'logout')
+  | where (event.action = 'login' or event.action = 'logout')
   | stats count() as cnt
   | head 100
 
@@ -236,20 +236,20 @@ def generate_ppl_by_llm(
 1. **必须使用 `| where` 进行条件过滤**，不能直接在 search 后写条件
 2. **多个条件使用 `and`/`or` 连接**，放在 `| where` 子句中
 3. **字符串值必须用单引号包裹**，如 'login'、'12345'
-4. **字段名不能有空格**，如 `@timestamp_cst`、`@gid`
+4. **字段名不能有空格**，如 `@timestamp`、`@gid`
 5. **比较运算符**：=（等于）、!=（不等于）、>=（大于等于）、<=（小于等于）
-6. **逻辑运算符优先级**：使用括号明确优先级，如 `(action = 'login' or action = 'logout')`
+6. **逻辑运算符优先级**：使用括号明确优先级，如 `(event.action = 'login' or event.action = 'logout')`
 
 【时间解析规则】
-- "今天" → @timestamp_cst >= '{today} 00:00:00'
-- "昨天" → @timestamp_cst >= '{yesterday} 00:00:00'
-- "最近 24 小时" → @timestamp_cst >= '{last_24_hours_start} 00:00:00'
-- "最近 7 天" → @timestamp_cst >= '{last_7_days_start} 00:00:00'
-- "最近 30 天" → @timestamp_cst >= '{last_30_days_start} 00:00:00'
-- "本月" → @timestamp_cst >= '{first_day_of_month_str} 00:00:00'
-- "2026 年" → @timestamp_cst >= '2026-01-01 00:00:00'
-- "2026 年 4 月" → @timestamp_cst >= '2026-04-01 00:00:00'
-- "2026 年 4 月 20 日" → @timestamp_cst >= '2026-04-20 00:00:00'
+- "今天" → @timestamp >= '{today} 00:00:00'
+- "昨天" → @timestamp >= '{yesterday} 00:00:00'
+- "最近 24 小时" → @timestamp >= '{last_24_hours_start} 00:00:00'
+- "最近 7 天" → @timestamp >= '{last_7_days_start} 00:00:00'
+- "最近 30 天" → @timestamp >= '{last_30_days_start} 00:00:00'
+- "本月" → @timestamp >= '{first_day_of_month_str} 00:00:00'
+- "2026 年" → @timestamp >= '2026-01-01 00:00:00'
+- "2026 年 4 月" → @timestamp >= '2026-04-01 00:00:00'
+- "2026 年 4 月 20 日" → @timestamp >= '2026-04-20 00:00:00'
 
 【安全限制 - 必须遵守】
 1. **日期限制**：如果用户问题中没有明确的时间范围，必须添加默认时间过滤：
@@ -299,13 +299,13 @@ def generate_ppl_by_llm(
         # 【关键修复】LLM 返回空 PPL 时，使用默认查询回退
         if not ppl_query:
             print(f"[FREE_QUERY] [WARN] LLM 返回了空 PPL，使用默认查询回退")
-            ppl_query = f"search source=`{INDEX_SOURCE_PATTERN}`\n| fields @timestamp_cst, msg, subtype, action\n| head 100"
+            ppl_query = f"search source=`{INDEX_SOURCE_PATTERN}`\n| fields @timestamp, message, fortinet.firewall.subtype, event.action\n| head 100"
         
         return ppl_query
     
     except Exception as e:
         print(f"LLM 生成 PPL 失败：{e}")
-        return f"search source=`{INDEX_SOURCE_PATTERN}`\n| fields @timestamp_cst, msg, subtype, action\n| head 100"
+        return f"search source=`{INDEX_SOURCE_PATTERN}`\n| fields @timestamp, message, fortinet.firewall.subtype, event.action\n| head 100"
 
 
 def _normalize_ppl(ppl_query: str) -> str:
@@ -318,7 +318,7 @@ def _normalize_ppl(ppl_query: str) -> str:
     # 【防御性检查】空查询直接返回默认查询
     if not ppl_query or not ppl_query.strip():
         print(f"[FREE_QUERY] [WARN] _normalize_ppl 收到空 PPL，使用默认查询")
-        return f"search source=`{INDEX_SOURCE_PATTERN}`\n| fields @timestamp_cst, msg, subtype, action\n| head 100"
+        return f"search source=`{INDEX_SOURCE_PATTERN}`\n| fields @timestamp, message, fortinet.firewall.subtype, event.action\n| head 100"
     
     # 确保以 search source= 开头
     if not ppl_query.startswith("search source="):
@@ -335,10 +335,10 @@ def _normalize_ppl(ppl_query: str) -> str:
     
     # 确保有时间过滤
     has_time_filter = (
-        "@timestamp_cst >=" in ppl_query or 
-        "@timestamp_cst <=" in ppl_query or
-        "@timestamp_cst >" in ppl_query or
-        "@timestamp_cst <" in ppl_query
+        "@timestamp >=" in ppl_query or 
+        "@timestamp <=" in ppl_query or
+        "@timestamp >" in ppl_query or
+        "@timestamp <" in ppl_query
     )
     
     if not has_time_filter:
@@ -350,11 +350,11 @@ def _normalize_ppl(ppl_query: str) -> str:
             if last_pipe_idx != -1:
                 ppl_query = (
                     ppl_query[:last_pipe_idx].rstrip() + 
-                    f"\n| where @timestamp_cst >= '{default_date_str}'" + 
+                    f"\n| where @timestamp >= '{default_date_str}'" + 
                     ppl_query[last_pipe_idx:]
                 )
             else:
-                ppl_query += f"\n| where @timestamp_cst >= '{default_date_str}'"
+                ppl_query += f"\n| where @timestamp >= '{default_date_str}'"
     
     # 确保有 head 限制
     if "| head" not in ppl_query and "|head" not in ppl_query:

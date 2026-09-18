@@ -58,8 +58,14 @@ INDEX_SOURCE_REGEX = re.compile(
 )
 
 
-def build_index_name(gid: str, combination: Dict[str, str] = None) -> str:
+def build_index_name(gid, combination: Dict[str, str] = None) -> str:
     """根据 gid 和厂商/产品组合构造完整索引名。"""
+    # 兼容传入列表的情况（如 LLM 误输出 ["19934"]）
+    if isinstance(gid, list):
+        if len(gid) == 1:
+            gid = gid[0]
+        else:
+            raise ValueError(f"gid 列表包含多个元素：{gid}，请确保只传入单个 gid")
     gid_str = str(gid).strip()
     if not _SAFE_GID.fullmatch(gid_str):
         raise ValueError(f"gid 必须是字母或数字：{gid}")

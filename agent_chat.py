@@ -12,14 +12,16 @@ ReAct 模式：思考 → 行动 → 观察循环
 import asyncio
 import json
 import logging
+import sys
 import copy 
 import hashlib
+from pathlib import Path
 from typing import Awaitable
-from venv import logger
 from fastapi.middleware.cors import CORSMiddleware
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from utils.redis_manager import get_redis_manager, init_redis_manager
 from contextlib import asynccontextmanager
@@ -41,6 +43,40 @@ from config import (
     LLM_TEMPERATURE,
 )
 
+# ========================================
+# 日志配置：使用 QueueHandler + QueueListener 确保并发安全
+# ========================================
+import os
+# 强制使用北京时间
+os.environ['TZ'] = 'Asia/Shanghai'
+try:
+    import time
+    time.tzset()
+except (ImportError, AttributeError):
+    pass  # 某些环境不支持 tzset
+
+import queue  # noqa: E402
+
+_log_queue = queue.Queue(-1)  # 无界队列
+
+app_logger = logging.getLogger("agent_chat")
+app_logger.setLevel(logging.INFO)
+# 添加队列处理器
+_queue_handler = logging.handlers.QueueHandler(_log_queue)
+app_logger.addHandler(_queue_handler)
+
+# 全局唯一的 QueueListener（由主线程运行）
+_listener = logging.handlers.QueueListener(
+    _log_queue,
+    logging.FileHandler("agent_chat.log", encoding="utf-8", mode="a"),
+    logging.StreamHandler(sys.stdout),
+    respect_handler_level=True,
+)
+_listener.start()
+LOG_FILE_PATH = str(
+    Path(__file__).resolve().parent / "agent_chat.log"
+)
+
 async def get_redis_manager_instance():
     """获取 Redis 管理器实例（已在 lifespan 中初始化）"""
     return get_redis_manager()
@@ -51,7 +87,7 @@ async def get_session_history(session_id: str) -> list:
         mgr = get_redis_manager()
         return await mgr.get_session(session_id)
     except Exception as e:
-        logging.warning(f"获取会话失败：{session_id}, error: {e}")
+        app_logger.warning(f"获取会话失败：{session_id}, error: {e}")
     return []
 
 
@@ -127,7 +163,7 @@ prompts = {
             "【free_query_request 专用规则】\n"
             "当选择 free_query_request 时，如果生成的PPL调用状态码返回200就不要继续调用了，只有不是200才继续调用，ppl_query 参数的生成规则如下：\n"
             f"1. PPL 必须以 `search source=`{INDEX_SOURCE_PATTERN}`` 或 `search source={INDEX_SOURCE_PATTERN}` 开头\n"
-            "2. 时间过滤使用 @timestamp_cst 字段，格式：@timestamp_cst >= 'YYYY-MM-DD HH:MM:SS'\n"
+            "2. 时间过滤使用 @timestamp 字段，格式：@timestamp >= 'YYYY-MM-DD HH:MM:SS'\n"
             "3. IP 过滤使用 srcip、dstip、remip 等字段\n"
             "4. 用户过滤使用 user 字段\n"
             "5. 设备组过滤使用 @gid 字段，格式：@gid = '设备组 ID'\n"
@@ -139,7 +175,7 @@ prompts = {
             "- 账户操作：action='Add'/'Delete', cfgpath='user.local'\n"
             "- IPS 告警：type='utm', subtype='ips', level='alert'\n"
             "- 系统事件：subtype='system', logdesc='Device rebooted'/'Device shutdown'\n"
-            "- 通用字段：@timestamp_cst, srcip, dstip, user, action, msg, @gid, devname, policyid\n\n"
+            "- 通用字段：@timestamp, srcip, dstip, user, action, msg, @gid, devname, policyid\n\n"
             "【其他几个场景工具参数提取规则】\n"
             "- start_time: 从用户问题中提取开始时间。如果用户提到相对时间（如'今天'、'最近 24 小时'、'近 7 天'、'近 30 天'等），直接传递原始文本（如'今天'、'最近 24 小时'、'近 7 天'），工具会自动解析为精确时间。如果是具体日期，填'YYYY-MM-DD'格式。如果用户问题中没有提到时间，填 None\n"
             "- end_time: 从用户问题中提取结束时间。如果用户提到相对时间（如'今天'、'最近 24 小时'、'近 7 天'、'近 30 天'等），直接传递原始文本（如'今天'、'最近 24 小时'、'近 7 天'），工具会自动解析为精确时间。如果是具体日期，填'YYYY-MM-DD'格式。如果用户问题中没有提到时间，填 None\n"
@@ -275,9 +311,9 @@ async def wrap_done(fn: Awaitable, event: asyncio.Event):
         await fn
     except asyncio.CancelledError:
         # early stop 时主动取消 executor 协程，记录日志后正常退出
-        logging.info("wrap_done: executor task was cancelled (early stop)")
+        app_logger.info("wrap_done: executor task was cancelled (early stop)")
     except Exception as e:
-        logging.exception(e)
+        app_logger.exception(e)
         msg = f"Caught exception: {e}"
         logger.error(f'{e.__class__.__name__}: {msg}',)
     finally:
@@ -307,20 +343,25 @@ async def chat_agent_stream(request: Request):
     is_admin = bool(data.get('is_admin', False))
     allowed_gids = data.get('allowed_gids', None)
 
+    # ========================================
+    # 请求日志
+    # ========================================
+    app_logger.info(f"\n{'='*60}")
+    app_logger.info(f"【请求开始】session_id: {session_id}, user_input: {user_input}")
+    app_logger.info(f"  login_account: {login_account}, is_admin: {is_admin}, allowed_gids: {allowed_gids}")
+    app_logger.info(f"{'='*60}\n")
+
     # 【数据权限】参数校验：
     # 1. login_account 必传，缺失直接拒绝请求（防止未鉴权调用拿到全量数据）
     # 2. 非 admin 用户必须携带非空 allowed_gids 白名单
     # 3. admin 用户忽略 allowed_gids，不注入任何过滤
     if not login_account:
-        async def auth_error_iterator():
-            """
-            登录账号缺失，拒绝请求
-            """
-            yield json.dumps(
-                {"error": "请求缺少登录账号信息，无法确认您的数据权限，请退出后重新登录再试。"},
-                ensure_ascii=False
-            ) + "\n\n"
-        return EventSourceResponse(auth_error_iterator())
+        app_logger.warning(f"[响应] HTTP 403 | 缺少 login_account | session_id: {session_id}")
+        return JSONResponse(
+            status_code=403,
+            content={"error": "请求缺少登录账号信息，无法确认您的数据权限，请退出后重新登录再试。"},
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
 
     # 白名单归一化为字符串列表；admin 默认不限制，但如果传入了 allowed_gids 也用于索引探测/效率优化
     if is_admin:
@@ -329,15 +370,12 @@ async def chat_agent_stream(request: Request):
     else:
         normalized_gids = [str(g).strip() for g in (allowed_gids or []) if str(g).strip()]
         if not normalized_gids:
-            async def scope_error_iterator():
-                """
-                普通用户未携带 gid 白名单，拒绝请求
-                """
-                yield json.dumps(
-                    {"error": "请求未携带用户组权限信息（allowed_gids），无法确认您的数据权限，请退出后重新登录再试。"},
-                    ensure_ascii=False
-                ) + "\n\n"
-            return EventSourceResponse(scope_error_iterator())
+            app_logger.warning(f"[响应] HTTP 403 | 缺少 allowed_gids | session_id: {session_id}, login_account: {login_account}")
+            return JSONResponse(
+                status_code=403,
+                content={"error": "请求未携带用户组权限信息（allowed_gids），无法确认您的数据权限，请退出后重新登录再试。"},
+                headers={"Content-Type": "application/json; charset=utf-8"}
+            )
 
     # 【数据权限】注入 request_ctx（LLM 不可见、不可伪造）
     # is_admin=True -> allowed_gids=None（不限制）；否则为白名单列表
@@ -350,12 +388,12 @@ async def chat_agent_stream(request: Request):
 
     # 校验必要参数
     if not session_id or not user_input:
-        async def error_iterator():
-            """
-            如果 session_id 或 user_input 为空，返回错误
-            """
-            yield json.dumps({"error": "session_id和user_input为必填参数"}, ensure_ascii=False) + "\n\n"
-        return EventSourceResponse(error_iterator())
+        app_logger.warning(f"[响应] HTTP 400 | 缺少 session_id 或 user_input | session_id: {session_id}, user_input: {user_input}")
+        return JSONResponse(
+            status_code=400,
+            content={"error": "session_id和user_input为必填参数"},
+            headers={"Content-Type": "application/json; charset=utf-8"}
+        )
 
     # Redis 和进程内会话均按账号隔离，避免不同用户复用同一个 session_id 串读历史。
     scoped_session_id = hashlib.sha256(
@@ -462,7 +500,7 @@ async def chat_agent_stream(request: Request):
             mgr = await get_redis_manager_instance()
             await mgr.set_session_scene(session_id, scene)
         except Exception as e:
-            logging.debug(f"保存会话场景失败：{e}")
+            app_logger.debug(f"保存会话场景失败：{e}")
 
         # ============================================
         # Token 预算检查 & 动态 max_tokens 计算
@@ -480,8 +518,10 @@ async def chat_agent_stream(request: Request):
                 intermediate_steps=[],
                 history=user_memory.load_memory_variables({}).get("history", "")
             )
+            app_logger.info(f"[Prompt] 初始 prompt 长度：{len(prompt_text)} 字符")
+            app_logger.info(f"[Prompt] 完整 prompt 内容:\n{prompt_text}\n[END prompt]")
             prompt_tokens = _estimate_tokens(prompt_text)
-            print(f"[Token Budget] 初始 prompt tokens: {prompt_tokens}")
+            app_logger.info(f"[Token Budget] 初始 prompt tokens: {prompt_tokens}")
             
             # 动态计算 max_tokens：确保 total_tokens <= MODEL_MAX_TOKENS
             # 预留额外余量：Agent 多轮迭代后 prompt 还会变长
@@ -504,16 +544,16 @@ async def chat_agent_stream(request: Request):
                     max_tokens = max(max_tokens, MIN_OUTPUT_TOKENS)
                     max_tokens = min(max_tokens, MAX_OUTPUT_TOKENS)
                     if max_tokens >= MIN_OUTPUT_TOKENS:
-                        print(f"[Token Budget] 历史 k: {original_k} → {k}，prompt tokens: {prompt_tokens}，max_tokens: {max_tokens}")
+                        app_logger.info(f"[Token Budget] 历史 k: {original_k} → {k}，prompt tokens: {prompt_tokens}，max_tokens: {max_tokens}")
                         break
             else:
-                print(f"[Token Budget] 无需缩减历史，max_tokens: {max_tokens}")
+                app_logger.info(f"[Token Budget] 无需缩减历史，max_tokens: {max_tokens}")
                 
         except Exception as e:
-            print(f"[Token Budget] Token 估算失败，使用默认值：{e}")
+            app_logger.info(f"[Token Budget] Token 估算失败，使用默认值：{e}")
             max_tokens = min(LLM_MAX_OUTPUT_TOKENS, 15000)
         
-        print(f"[Token Budget] 最终 max_tokens = {max_tokens}")
+        # app_logger.info(f"[Token Budget] 最终 max_tokens = {max_tokens}")
         
         # 初始化模型（使用动态计算的 max_tokens）
         model = ChatOpenAI(
@@ -604,10 +644,10 @@ async def chat_agent_stream(request: Request):
                         pass
             
             elif status == Status.tool_finish:
-                print(f"\n{'='*60}")
-                print(f"=== agent_chat tool_finish DEBUG ===")
-                print(f"{'='*60}")
-                print(f"status = {status}, Status.tool_finish = {Status.tool_finish}")
+                # app_logger.info(f"\n{'='*60}")
+                # app_logger.info(f"=== agent_chat tool_finish DEBUG ===")
+                # app_logger.info(f"{'='*60}")
+                # app_logger.info(f"status = {status}, Status.tool_finish = {Status.tool_finish}")
                 output_str = data.get("output_str", "")
                 latest_graph_data = None
                 # 【新增】直接从 data 中获取 graph_data（来自 sever.py 的 on_tool_end）
@@ -618,10 +658,10 @@ async def chat_agent_stream(request: Request):
                 trace_info_from_sever = data.get("trace_info", None)
                 if trace_info_from_sever:
                     latest_trace_info = trace_info_from_sever
-                print(f"output_str 总长度：{len(output_str)}")
-                print(f"\n【完整 output_str 内容】:")
-                print(f"{output_str}")
-                print(f"\n【END output_str】")
+                # app_logger.info(f"output_str 总长度：{len(output_str)}")
+                # app_logger.info(f"\n【完整 output_str 内容】:")
+                # app_logger.info(f"{output_str}")
+                # app_logger.info(f"\n【END output_str】")
                 
                 # 检测工具返回是否包含"最终答案："前缀，直接返回
                 if output_str.startswith("最终答案："):
@@ -655,9 +695,9 @@ async def chat_agent_stream(request: Request):
                         steps = output_obj.get("steps", [])
                         http_status = output_obj.get("http_status", 0)
                         count = output_obj.get("count", 0)
-                        print(f"steps count: {len(steps)}")
-                        print(f"http_status: {http_status}, count: {count}")
-                        print(f"=== end ===\n")
+                        # app_logger.info(f"steps count: {len(steps)}")
+                        # app_logger.info(f"http_status: {http_status}, count: {count}")
+                        # app_logger.info(f"=== end ===\n")
                         
                         # 【关键修复】HTTP 200 时，根据原始记录数判断是否为空结果
                         if http_status == 200:
@@ -701,7 +741,7 @@ async def chat_agent_stream(request: Request):
                                     all_edges = []
                                     ip_graph_count = 0
                                     for detail in ip_details:
-                                        print(f"[DEBUG] Detail keys: {list(detail.keys())}, has_graph: {bool(detail.get('graph_data'))}")
+                                        # app_logger.info(f"[DEBUG] Detail keys: {list(detail.keys())}, has_graph: {bool(detail.get('graph_data'))}")
                                         if isinstance(detail, dict):
                                             # 直接获取 graph_data (brute_force 返回结构)
                                             ip_gd = detail.get("graph_data")
@@ -754,7 +794,7 @@ async def chat_agent_stream(request: Request):
                                                 for k, v in ip_dist.items():
                                                     combined_graph_data["stats"]["type_distribution"][k] = combined_graph_data["stats"]["type_distribution"].get(k, 0) + v
                                         
-                                        print(f"[DEBUG] Extracted graph_data: nodes={len(merged_nodes)}, edges={len(merged_edges)}")
+                                        # app_logger.info(f"[DEBUG] Extracted graph_data: nodes={len(merged_nodes)}, edges={len(merged_edges)}")
                                         latest_graph_data = combined_graph_data
                                     else:
                                         latest_graph_data = None
@@ -899,8 +939,8 @@ async def chat_agent_stream(request: Request):
                         
                         yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
                     except json.JSONDecodeError as e:
-                        print(f"JSON 解析失败：{e}")
-                        print(f"=== end ===\n")
+                        app_logger.info(f"JSON 解析失败：{e}")
+                        app_logger.info(f"=== end ===\n")
                         tools_use = [f"\n工具执行完成 (解析失败): {output_str[:200]}..."]
                         yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
             
@@ -922,15 +962,15 @@ async def chat_agent_stream(request: Request):
             elif status == Status.agent_finish:
                 final_answer = data.get("final_answer", "")
                 index_check_steps = data.get("steps", [])
-                print(f"\n{'='*60}")
-                print(f"=== agent_finish DEBUG ===")
-                print(f"final_answer 长度：{len(final_answer)}")
-                print(f"final_answer 前100字符：{final_answer[:100]}")
-                print(f"collected_answer 长度：{len(collected_answer)}")
-                print(f"latest_trace_info 是否存在：{latest_trace_info is not None}")
-                print(f"{'='*60}\n")
+                # app_logger.info(f"\n{'='*60}")
+                # app_logger.info(f"=== agent_finish DEBUG ===")
+                # app_logger.info(f"final_answer 长度：{len(final_answer)}")
+                # app_logger.info(f"final_answer 前100字符：{final_answer[:100]}")
+                # app_logger.info(f"collected_answer 长度：{len(collected_answer)}")
+                # app_logger.info(f"latest_trace_info 是否存在：{latest_trace_info is not None}")
+                # app_logger.info(f"{'='*60}")
                 
-                print(f"[DEBUG] Agent Finish: latest_graph_data is {latest_graph_data is not None}")
+                # app_logger.info(f"[DEBUG] Agent Finish: latest_graph_data is {latest_graph_data is not None}")
 
                 # 【修复】用内容比对决定是否推 final_answer（避免 locals() 跨作用域问题）
                 should_push_final = False
@@ -946,7 +986,7 @@ async def chat_agent_stream(request: Request):
                     if "不存在" not in error_msg:
                         error_msg = str_lang.get('index_not_found', '该索引不存在，已为您关闭日志查询功能')
                     final_answer = error_msg
-                    print(f"[agent_finish] 从步骤信息构造 final_answer: {final_answer}")
+                    app_logger.info(f"[agent_finish] 从步骤信息构造 final_answer: {final_answer}")
 
                 if final_answer:
                     if not collected_answer:
@@ -966,11 +1006,11 @@ async def chat_agent_stream(request: Request):
                         should_push_final = True
                         reason = "内容不同"
 
+                # 无论是否推送到 SSE，始终记录完整 final_answer
+                app_logger.info(f"[agent_finish] 最终输出 (pushed={should_push_final}, reason={reason}, len={len(final_answer)}): {final_answer}")
+
                 if should_push_final:
                     yield json.dumps({"final_answer": final_answer, "steps": index_check_steps}, ensure_ascii=False) + "\n\n"
-                    print(f"[agent_finish] final_answer pushed ({reason}), length: {len(final_answer)}")
-                else:
-                    print(f"[agent_finish] 跳过 final_answer 推送（{reason}）")
 
                 # 【修复】流完后只推一次 graph_data（精简版），作为"处理完成"信号
                 if latest_trace_info or latest_graph_data:
@@ -997,13 +1037,13 @@ async def chat_agent_stream(request: Request):
                         })
 
                     slim_size = len(json.dumps(slim_trace, ensure_ascii=False))
-                    print(f"[agent_finish] 推送精简 graph_data，大小：{slim_size} 字符（作为完成信号）")
+                    app_logger.info(f"[agent_finish] 推送精简 graph_data，大小：{slim_size} 字符（作为完成信号）")
                     yield json.dumps(slim_trace, ensure_ascii=False) + "\n\n"
-                    print(f"[agent_finish] graph_data event pushed (完成信号)")
+                    app_logger.info(f"[agent_finish] graph_data event pushed (完成信号)")
 
                     # 强制刷新
                     await asyncio.sleep(0.1)
-                    print("[agent_finish] SSE buffer flushed")
+                    app_logger.info("[agent_finish] SSE buffer flushed")
 
                 if final_answer:
                     try:
@@ -1019,13 +1059,14 @@ async def chat_agent_stream(request: Request):
                         new_history = new_history[-20:]
                         await mgr.save_session(session_id, new_history)
                     except Exception as e:
-                        logging.warning(f"保存会话历史失败：{e}")
+                        app_logger.warning(f"保存会话历史失败：{e}")
                 # 退出循环
                 break
         # 等待任务完成，释放资源
         await task
 
     # 返回流式响应
+    app_logger.info(f"[响应] HTTP 200 | 正常流式响应 | session_id: {session_id}, user_input: {user_input}")
     return EventSourceResponse(agent_chat_iterator(user_input, scoped_session_id))
 
 

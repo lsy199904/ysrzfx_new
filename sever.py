@@ -10,6 +10,10 @@ from typing import Any, Dict, List, Optional
 
 from langchain.schema import AgentFinish, AgentAction
 from langchain.schema.output import LLMResult
+import logging
+
+# 复用 agent_chat 模块中已配置好的 app_logger（单例）
+app_logger = logging.getLogger("agent_chat")
 
 
 def dumps(obj: Dict) -> str:
@@ -79,30 +83,30 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
         """
         定义工具结束时的回调方法
         """
-        print(f"\n{'='*60}")
-        print(f"=== on_tool_end DEBUG ===")
-        print(f"{'='*60}")
-        print(f"run_id: {run_id}")
-        print(f"output 总长度：{len(output)}")
-        print(f"\n【完整 output 内容】:")
-        print(f"{output}")
-        print(f"\n【END output】")
+        app_logger.info(f"\n{'='*60}")
+        app_logger.info(f"=== on_tool_end DEBUG ===")
+        app_logger.info(f"{'='*60}")
+        app_logger.info(f"run_id: {run_id}")
+        app_logger.info(f"output 总长度：{len(output)}")
+        app_logger.info(f"\n【完整 output 内容】:")
+        app_logger.info(f"{output}")
+        app_logger.info(f"\n【END output】")
         
         # 尝试解析 JSON 并记录关键信息
         output_clean = output.replace("Answer:", "").strip()
         try:
             output_json = json.loads(output_clean)
-            print(f"\nJSON 解析：成功")
-            print(f"JSON keys: {list(output_json.keys())}")
+            app_logger.info(f"\nJSON 解析：成功")
+            app_logger.info(f"JSON keys: {list(output_json.keys())}")
         except json.JSONDecodeError as e:
-            print(f"\nJSON 解析：失败 - {e}")
+            app_logger.info(f"\nJSON 解析：失败 - {e}")
         
         # 【新增】检测兜底结果：如果工具返回了 __agent_stop__，直接终止后续 LLM 调用
         # 同时推送 tool_finish 和 agent_finish 两个事件给主循环处理
         try:
             result = json.loads(output_clean)
-            print(f"=== early stop DEBUG ===")
-            print(f"result.get('__agent_stop__'): {result.get('__agent_stop__')}")
+            app_logger.info(f"=== early stop DEBUG ===")
+            app_logger.info(f"result.get('__agent_stop__'): {result.get('__agent_stop__')}")
             if result.get("__agent_stop__"):
                 self.agent_stop = True
                 steps = result.get("steps", [])
@@ -128,27 +132,27 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
                 # 【关键修复】取消 executor 的 acall 协程，阻止后续 LLM 调用
                 if self.task_ref is not None:
                     self.task_ref.cancel()
-                    print("[on_tool_end] 已调用 task_ref.cancel() 取消 executor 协程")
+                    app_logger.info("[on_tool_end] 已调用 task_ref.cancel() 取消 executor 协程")
                 self.done.set()  # 终止后续处理
-                print(f"final_answer (suggestion) 长度：{len(suggestion)}")
-                print(f"final_answer 内容：{suggestion}")
-                print(f"{'='*60}")
-                print(f"=== end on_tool_end (early stop) ===")
-                print(f"{'='*60}\n")
+                app_logger.info(f"final_answer (suggestion) 长度：{len(suggestion)}")
+                app_logger.info(f"final_answer 内容：{suggestion}")
+                app_logger.info(f"{'='*60}")
+                app_logger.info(f"=== end on_tool_end (early stop) ===")
+                app_logger.info(f"{'='*60}\n")
                 return
             else:
-                print(f"未检测到 __agent_stop__，继续正常流程")
-                print(f"{'='*60}\n")
+                app_logger.info(f"未检测到 __agent_stop__，继续正常流程")
+                app_logger.info(f"{'='*60}\n")
         except (json.JSONDecodeError, TypeError, NameError) as e:
-            print(f"早期停止检测失败: {type(e).__name__}: {e}")
-            print(f"output_clean 长度：{len(output_clean)}")
-            print(f"output_clean 内容：{output_clean}")
-            print(f"{'='*60}\n")
+            app_logger.info(f"早期停止检测失败: {type(e).__name__}: {e}")
+            app_logger.info(f"output_clean 长度：{len(output_clean)}")
+            app_logger.info(f"output_clean 内容：{output_clean}")
+            app_logger.info(f"{'='*60}\n")
             pass
 
-        print(f"{'='*60}")
-        print(f"=== end on_tool_end ===")
-        print(f"{'='*60}\n")
+        app_logger.info(f"{'='*60}")
+        app_logger.info(f"=== end on_tool_end ===")
+        app_logger.info(f"{'='*60}\n")
         
         self.out = True
         output_str = output.replace("Answer:", "")
@@ -157,13 +161,43 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
         graph_data = None
         try:
             output_json = json.loads(output_str.strip())
-            trace_info = output_json.get("trace_info", {})
             
+            # 【新增】打印完整的 output_json 结构用于调试
+            app_logger.info(f"[sever.py] on_tool_end output_json keys: {list(output_json.keys())}")
+            if "trace_info" in output_json:
+                app_logger.info(f"[sever.py] trace_info keys: {list(output_json['trace_info'].keys())}")
+                if "graph_data" in output_json["trace_info"]:
+                    gd = output_json["trace_info"]["graph_data"]
+                    app_logger.info(f"[sever.py] graph_data type: {type(gd)}, content: {str(gd)[:500]}")
+            
+            # 优先从顶层 trace_info 提取（ip_trace 工具直调场景）
+            trace_info = output_json.get("trace_info", {})
+
             # 优先从 trace_info 顶层提取 graph_data
-            if isinstance(trace_info, dict) and trace_info.get("graph_data"):
+            if isinstance(trace_info, dict):
+                # 【修复】即使 graph_data 为空字典，也要记录，因为可能是查询结果为空
                 graph_data = trace_info.get("graph_data")
-            # 兼容嵌套结构：从 ip_details[0].graph_data 提取
+                if graph_data:
+                    app_logger.info(f"[sever.py] 从 trace_info.graph_data 提取，nodes={len(graph_data.get('nodes', []))}, edges={len(graph_data.get('edges', []))}")
+                else:
+                    app_logger.warning(f"[sever.py] trace_info.graph_data 为空，trace_info keys: {list(trace_info.keys())}")
+            # 兼容嵌套结构：从 trace_info.ip_details[0].graph_data 提取
             elif isinstance(trace_info, dict) and trace_info.get("ip_details"):
+                ip_details = trace_info.get("ip_details", [])
+                if isinstance(ip_details, list) and len(ip_details) > 0:
+                    first_detail = ip_details[0]
+                    if isinstance(first_detail, dict) and first_detail.get("graph_data"):
+                        graph_data = first_detail.get("graph_data")
+            # 【修复】网络攻击检测 / 暴力破解返回结构中 trace_info 不在顶层，
+            # 而是 ip_details 和 ip_count 直接位于顶层。此时需要重构 trace_info。
+            elif isinstance(output_json, dict) and output_json.get("ip_details"):
+                trace_info = {
+                    "ip_details": output_json.get("ip_details", []),
+                    "ip_count": output_json.get("ip_count", 0),
+                    "time_window": output_json.get("time_window", ""),
+                    "status": output_json.get("status", "success"),
+                }
+                # 从 ip_details 第一条提取 graph_data
                 ip_details = trace_info.get("ip_details", [])
                 if isinstance(ip_details, list) and len(ip_details) > 0:
                     first_detail = ip_details[0]
@@ -216,7 +250,7 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
         self.collected_tokens.append(token)
         
         # 打印每个 token，帮助诊断
-        print(f"[on_llm_new_token] token={repr(token[:100] if len(token) > 100 else token)}")
+        app_logger.info(f"[on_llm_new_token] token={repr(token[:100] if len(token) > 100 else token)}")
         
         special_tokens = ["Action", "<|observation|>"]
         for stoken in special_tokens:
@@ -282,46 +316,46 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
         # 如果已收到兜底结果，跳过 LLM 结束通知
         if self.agent_stop:
             return
-        print(f"\n{'='*60}")
-        print(f"=== on_llm_end DEBUG ===")
-        print(f"{'='*60}")
+        app_logger.info(f"\n{'='*60}")
+        app_logger.info(f"=== on_llm_end DEBUG ===")
+        app_logger.info(f"{'='*60}")
         
         # ========== Token 消耗监控 ==========
         llm_output = response.llm_output if hasattr(response, 'llm_output') and response.llm_output else {}
         if llm_output:
-            print(f"\n【Token 使用统计】")
+            app_logger.info(f"\n【Token 使用统计】")
             token_usage = llm_output.get('token_usage', llm_output.get('usage', {}))
             if token_usage:
                 prompt_tokens = token_usage.get('prompt_tokens', token_usage.get('input_tokens', 'N/A'))
                 completion_tokens = token_usage.get('completion_tokens', token_usage.get('generated_tokens', 'N/A'))
                 total_tokens = token_usage.get('total_tokens', 'N/A')
-                print(f"  - 输入 Token (prompt_tokens): {prompt_tokens}")
-                print(f"  - 输出 Token (completion_tokens): {completion_tokens}")
-                print(f"  - 总计 Token (total_tokens): {total_tokens}")
+                app_logger.info(f"  - 输入 Token (prompt_tokens): {prompt_tokens}")
+                app_logger.info(f"  - 输出 Token (completion_tokens): {completion_tokens}")
+                app_logger.info(f"  - 总计 Token (total_tokens): {total_tokens}")
                 
                 if isinstance(completion_tokens, int):
                     if completion_tokens >= 15000:
-                        print(f"  ⚠️ 警告：输出 Token 数 ({completion_tokens}) 接近 max_tokens 限制 (16000)，可能导致截断！")
+                        app_logger.info(f"  ⚠️ 警告：输出 Token 数 ({completion_tokens}) 接近 max_tokens 限制 (16000)，可能导致截断！")
                     elif completion_tokens >= 10000:
-                        print(f"  ⚠️ 注意：输出 Token 数 ({completion_tokens}) 较多")
+                        app_logger.info(f"  ⚠️ 注意：输出 Token 数 ({completion_tokens}) 较多")
             else:
-                print(f"  - Token 使用信息：未找到 (llm_output keys: {list(llm_output.keys()) if isinstance(llm_output, dict) else 'N/A'})")
+                app_logger.info(f"  - Token 使用信息：未找到 (llm_output keys: {list(llm_output.keys()) if isinstance(llm_output, dict) else 'N/A'})")
         else:
-            print(f"\n【Token 使用统计】")
-            print(f"  - llm_output 为空，无法获取 Token 使用信息")
+            app_logger.info(f"\n【Token 使用统计】")
+            app_logger.info(f"  - llm_output 为空，无法获取 Token 使用信息")
         
         # ========== 诊断：检查收集的 token ==========
-        print(f"\n【收集的 Token 诊断】")
-        print(f"  - 收集的 token 数量：{len(self.collected_tokens)}")
+        app_logger.info(f"\n【收集的 Token 诊断】")
+        app_logger.info(f"  - 收集的 token 数量：{len(self.collected_tokens)}")
         if self.collected_tokens:
             collected_text = ''.join(self.collected_tokens)
-            print(f"  - 收集的 token 拼接长度：{len(collected_text)}")
-            print(f"  - 收集的 token 内容预览 (前 500 字符):")
-            print(f"    {collected_text[:500]}")
+            app_logger.info(f"  - 收集的 token 拼接长度：{len(collected_text)}")
+            app_logger.info(f"  - 收集的 token 内容预览 (前 500 字符):")
+            app_logger.info(f"    {collected_text[:500]}")
             if len(collected_text) > 500:
-                print(f"    ... (还有 {len(collected_text) - 500} 字符)")
+                app_logger.info(f"    ... (还有 {len(collected_text) - 500} 字符)")
         else:
-            print(f"  - 未收集到任何 token，说明 on_llm_new_token 从未被调用或 token 为空")
+            app_logger.info(f"  - 未收集到任何 token，说明 on_llm_new_token 从未被调用或 token 为空")
         
         # 记录 LLM 生成的完整响应
         full_text = ""
@@ -342,35 +376,35 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
                 full_text = generation['text']
             
             if full_text:
-                print(f"\nLLM 生成文本总长度：{len(full_text)}")
+                app_logger.info(f"\nLLM 生成文本总长度：{len(full_text)}")
                 
                 # 检查是否包含思考标签
                 has_thought_start = '<think>' in full_text
                 has_thought_end = '</think>' in full_text
-                print(f"  - 包含 <think> 标签：{has_thought_start}")
-                print(f"  - 包含 </think> 标签：{has_thought_end}")
+                app_logger.info(f"  - 包含 <think> 标签：{has_thought_start}")
+                app_logger.info(f"  - 包含 </think> 标签：{has_thought_end}")
                 
                 if has_thought_start and not has_thought_end:
-                    print(f"  ⚠️ 警告：发现未闭合的 <think> 标签，模型思考被截断！")
+                    app_logger.info(f"  ⚠️ 警告：发现未闭合的 <think> 标签，模型思考被截断！")
                 
-                print(f"\n【完整 LLM 输出内容】:")
-                print(f"{full_text}")
-                print(f"\n【END LLM 输出】")
+                app_logger.info(f"\n【完整 LLM 输出内容】:")
+                app_logger.info(f"{full_text}")
+                app_logger.info(f"\n【END LLM 输出】")
             else:
-                print("LLM 生成文本为空")
-                print(f"  generation 类型：{type(generation)}")
-                print(f"  response.generations 类型：{type(response.generations)}")
-                print(f"  response.generations 内容：{response.generations}")
+                app_logger.info("LLM 生成文本为空")
+                app_logger.info(f"  generation 类型：{type(generation)}")
+                app_logger.info(f"  response.generations 类型：{type(response.generations)}")
+                app_logger.info(f"  response.generations 内容：{response.generations}")
         else:
-            print("LLM generations 为空")
-            print(f"  response.generations: {response.generations}")
+            app_logger.info("LLM generations 为空")
+            app_logger.info(f"  response.generations: {response.generations}")
         
         # 重置收集的 token
         self.collected_tokens = []
         
-        print(f"{'='*60}")
-        print(f"=== end on_llm_end ===")
-        print(f"{'='*60}\n")
+        app_logger.info(f"{'='*60}")
+        app_logger.info(f"=== end on_llm_end ===")
+        app_logger.info(f"{'='*60}\n")
         
         self.cur_tool.update(
             status=Status.complete,
@@ -397,10 +431,10 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
         """
         定义 Agent 完成时的回调方法
         """
-        print(f"\n{'='*60}")
-        print(f"=== on_agent_finish DEBUG ===")
-        print(f"{'='*60}")
-        print(f"run_id: {run_id}")
+        app_logger.info(f"\n{'='*60}")
+        app_logger.info(f"=== on_agent_finish DEBUG ===")
+        app_logger.info(f"{'='*60}")
+        app_logger.info(f"run_id: {run_id}")
         
         final_answer = finish.return_values.get("output", "")
         # 如果是 __agent_stop__ JSON，提取纯文本 suggestion
@@ -410,34 +444,34 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
             if isinstance(parsed, dict) and parsed.get("__agent_stop__"):
                 original_answer = final_answer
                 final_answer = parsed.get("suggestion") or parsed.get("error") or final_answer
-                print(f"[on_agent_finish] 检测到 __agent_stop__ JSON，从 {len(original_answer)} 字符提取 suggestion: {len(final_answer)} 字符")
+                app_logger.info(f"[on_agent_finish] 检测到 __agent_stop__ JSON，从 {len(original_answer)} 字符提取 suggestion: {len(final_answer)} 字符")
         except Exception:
             pass
-        print(f"final_answer 总长度：{len(final_answer)}")
-        print(f"\n【完整 final_answer 内容】:")
-        print(f"{final_answer}")
-        print(f"\n【END final_answer】")
+        app_logger.info(f"final_answer 总长度：{len(final_answer)}")
+        app_logger.info(f"\n【完整 final_answer 内容】:")
+        app_logger.info(f"{final_answer}")
+        app_logger.info(f"\n【END final_answer】")
         
         # 检查是否包含截断标记
         if final_answer.endswith("...") or final_answer.endswith("…"):
-            print("⚠️ 警告：final_answer 可能已被截断（以...结尾）")
+            app_logger.info("⚠️ 警告：final_answer 可能已被截断（以...结尾）")
         
         # 检查是否包含预期的回复格式
         if "**查询结果**" in final_answer:
-            print("✓ 包含预期的回复格式：**查询结果**")
+            app_logger.info("✓ 包含预期的回复格式：**查询结果**")
         if "**关键发现**" in final_answer:
-            print("✓ 包含预期的回复格式：**关键发现**")
+            app_logger.info("✓ 包含预期的回复格式：**关键发现**")
         
-        print(f"{'='*60}")
-        print(f"=== end on_agent_finish ===")
-        print(f"{'='*60}\n")
+        app_logger.info(f"{'='*60}")
+        app_logger.info(f"=== end on_agent_finish ===")
+        app_logger.info(f"{'='*60}\n")
         
         # 【关键修复】只输出一次 final_answer
-        print(f"has_output_final_answer: {self.has_output_final_answer}")
-        print(f"final_answer 前100字符：{final_answer[:100]}")
+        app_logger.info(f"has_output_final_answer: {self.has_output_final_answer}")
+        app_logger.info(f"final_answer 前100字符：{final_answer[:100]}")
         if not self.has_output_final_answer:
             self.has_output_final_answer = True
-            print(f"✓ 推送 final_answer 到队列")
+            app_logger.info(f"✓ 推送 final_answer 到队列")
             # 返回最终答案
             cur_tool_data = {
                 "status": Status.agent_finish,

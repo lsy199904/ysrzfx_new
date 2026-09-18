@@ -1,10 +1,14 @@
 from __future__ import annotations
 import json
+import logging
 from langchain.agents import Tool, AgentOutputParser
 from langchain.prompts import StringPromptTemplate
 from typing import List
 from langchain.schema import AgentAction, AgentFinish
 from pydantic.schema import model_schema
+
+# 复用 agent_chat 模块中已配置好的 app_logger（单例）
+app_logger = logging.getLogger("agent_chat")
 
 
 class CustomPromptTemplate(StringPromptTemplate):
@@ -63,26 +67,24 @@ class CustomOutputParser(AgentOutputParser):
         import re
 
         # ========== 诊断日志：记录 LLM 原始输出 ==========
-        print(f"\n{'='*60}")
-        print(f"=== CustomOutputParser.parse DEBUG ===")
-        print(f"{'='*60}")
-        print(f"llm_output 总长度：{len(llm_output)}")
-        print(f"\n【完整 llm_output 内容】:")
-        print(f"{llm_output}")
-        print(f"\n【END llm_output】")
+        app_logger.info(f"\n{'='*60}")
+        app_logger.info(f"=== CustomOutputParser.parse DEBUG ===")
+        app_logger.info(f"{'='*60}")
+        app_logger.info(f"llm_output 总长度：{len(llm_output)}")
+        app_logger.info(f"\n【完整 llm_output 内容】:\n{llm_output}\n【END llm_output】")
 
         # === 0. 清理 Qwen3 思考模式标签 ===
         # Qwen3 默认开启思考模式，生成 <think>...</think> 标签包裹的推理内容
         # 这些推理内容会干扰 ReAct 格式解析，需要提取 </think> 之后的有效内容
         if '</think>' in llm_output:
             llm_output = llm_output.split('</think>', 1)[1].strip()
-            print(f"\n检测到 </think> 标签，提取 </think> 之后的内容")
-            print(f"清理后 llm_output 长度：{len(llm_output)}")
-            print(f"清理后内容：{llm_output}")
+            app_logger.info(f"\n检测到 </think> 标签，提取 </think> 之后的内容")
+            app_logger.info(f"清理后 llm_output 长度：{len(llm_output)}")
+            app_logger.info(f"清理后内容：{llm_output}")
         elif '<think>' in llm_output or '<' + '' + 'tool_call>' in llm_output:
             # 只有 <think> 没有 </think>，说明思考内容被截断
             # 【修复】不再直接返回错误，而是尝试多种策略恢复 Action
-            print(f"\n⚠️ 检测到未闭合的 <think> 标签（思考被截断），尝试恢复 Action/Answer")
+            app_logger.info(f"\n⚠️ 检测到未闭合的 <think> 标签（思考被截断），尝试恢复 Action/Answer")
 
             # 策略 A: 在 thinking 块中匹配"行动：xxx"或"Action: xxx"，思考中可能直接给出 Action
             inner_action_match = re.search(
@@ -100,27 +102,27 @@ class CustomOutputParser(AgentOutputParser):
             recovered_action = None
             if inner_action_match:
                 recovered_action = inner_action_match.group(1).strip()
-                print(f"策略 A 命中 - 从 thinking 块提取 Action: {recovered_action}")
+                app_logger.info(f"策略 A 命中 - 从 thinking 块提取 Action: {recovered_action}")
             elif natural_action_match:
                 candidate = natural_action_match.group(1).strip()
                 # 验证是否是已知工具名（包含 _request 或常见关键字）
                 if '_request' in candidate or candidate in ['tool', 'search', 'query']:
                     recovered_action = candidate
-                    print(f"策略 B 命中 - 从自然语言提取 Action: {recovered_action}")
+                    app_logger.info(f"策略 B 命中 - 从自然语言提取 Action: {recovered_action}")
 
             if recovered_action:
                 # 重构为标准 ReAct 格式，强制工具名+空参数（让 Agent 重新生成参数）
                 llm_output = f"行动：{recovered_action}\n行动输入：{{}}"
-                print(f"重构为标准格式: {llm_output[:200]}")
+                app_logger.info(f"重构为标准格式: {llm_output[:200]}")
             else:
                 # 策略 C: 取 <think> 之后的内容
                 after_think = llm_output.split('<think>', 1)[-1].strip()
                 if after_think and '<think>' not in after_think and len(after_think) > 5:
                     llm_output = after_think
-                    print(f"策略 C 命中 - 提取 <think> 之后的内容，长度：{len(llm_output)}")
+                    app_logger.info(f"策略 C 命中 - 提取 <think> 之后的内容，长度：{len(llm_output)}")
                 else:
                     # 完全无法提取任何内容
-                    print(f"所有策略均失败，返回截断提示")
+                    app_logger.info(f"所有策略均失败，返回截断提示")
                     return AgentFinish(
                         return_values={"output": "抱歉，模型推理过程被中断，请重新提问。"},
                         log=llm_output,
@@ -167,14 +169,14 @@ class CustomOutputParser(AgentOutputParser):
                             original_len = len(action_input)
                             action_input = action_input[:json_end]
                             if len(action_input) < original_len:
-                                print(f"\n截断 JSON 后的多余文本：{original_len} -> {len(action_input)}")
+                                app_logger.info(f"\n截断 JSON 后的多余文本：{original_len} -> {len(action_input)}")
 
-                    print(f"\n检测到 Action: tool={action}")
-                    print(f"行动输入原始内容（前200字符）：{action_input[:200]}")
-                    print(f"返回 AgentAction，继续调用工具")
-                    print(f"{'='*60}")
-                    print(f"=== end parse (AgentAction) ===")
-                    print(f"{'='*60}\n")
+                    app_logger.info(f"\n检测到 Action: tool={action}")
+                    app_logger.info(f"行动输入原始内容（前200字符）：{action_input[:200]}")
+                    app_logger.info(f"返回 AgentAction，继续调用工具")
+                    app_logger.info(f"{'='*60}")
+                    app_logger.info(f"=== end parse (AgentAction) ===")
+                    app_logger.info(f"{'='*60}\n")
 
                     # 解析行动输入为 JSON 或字典
                     try:
@@ -188,9 +190,9 @@ class CustomOutputParser(AgentOutputParser):
 
                         # 验证解析结果：如果是字典，检查关键字段是否存在
                         if isinstance(action_input, dict):
-                            print(f"解析成功，参数 keys: {list(action_input.keys())}")
+                            app_logger.info(f"解析成功，参数 keys: {list(action_input.keys())}")
                         else:
-                            print(f"⚠️ 解析结果不是字典，类型: {type(action_input)}")
+                            app_logger.info(f"⚠️ 解析结果不是字典，类型: {type(action_input)}")
 
                         return AgentAction(
                             tool=action,
@@ -198,7 +200,7 @@ class CustomOutputParser(AgentOutputParser):
                             log=llm_output
                         )
                     except Exception as e:
-                        print(f"⚠️ 行动输入解析异常：{e}")
+                        app_logger.info(f"⚠️ 行动输入解析异常：{e}")
                         pass
 
         # === 2. 检测工具返回的 JSON（http_status 非 200）→ 兜底提示 ===
@@ -208,14 +210,14 @@ class CustomOutputParser(AgentOutputParser):
                 data = json.loads(llm_stripped)
                 if isinstance(data, dict) and 'http_status' in data:
                     http_status = data.get('http_status', 0)
-                    print(f"\n检测到 JSON 格式，http_status={http_status}")
+                    app_logger.info(f"\n检测到 JSON 格式，http_status={http_status}")
 
                     # 状态码非 200，返回兜底提示
                     if http_status != 200:
-                        print(f"返回兜底提示 (http_status != 200)")
-                        print(f"{'='*60}")
-                        print(f"=== end parse (兜底提示) ===")
-                        print(f"{'='*60}\n")
+                        app_logger.info(f"返回兜底提示 (http_status != 200)")
+                        app_logger.info(f"{'='*60}")
+                        app_logger.info(f"=== end parse (兜底提示) ===")
+                        app_logger.info(f"{'='*60}\n")
 
                         return AgentFinish(
                             return_values={
@@ -234,18 +236,18 @@ class CustomOutputParser(AgentOutputParser):
 
                     # 状态码 200，返回 JSON（让 LLM 总结）
                     output_json = json.dumps(data, ensure_ascii=False)
-                    print(f"返回 JSON 数据 (http_status == 200)")
-                    print(f"output_json 长度：{len(output_json)}")
-                    print(f"{'='*60}")
-                    print(f"=== end parse (JSON) ===")
-                    print(f"{'='*60}\n")
+                    app_logger.info(f"返回 JSON 数据 (http_status == 200)")
+                    app_logger.info(f"output_json 长度：{len(output_json)}")
+                    app_logger.info(f"{'='*60}")
+                    app_logger.info(f"=== end parse (JSON) ===")
+                    app_logger.info(f"{'='*60}\n")
 
                     return AgentFinish(
                         return_values={"output": output_json},
                         log=llm_output,
                     )
             except Exception as e:
-                print(f"JSON 解析失败：{e}")
+                app_logger.info(f"JSON 解析失败：{e}")
                 pass  # JSON 解析失败，落入兜底
 
         # === 3. 兜底：返回 LLM 输出或友好提示 ===
@@ -253,11 +255,11 @@ class CustomOutputParser(AgentOutputParser):
         answer_match = re.search(r'最终答案：\s*(.+?)(?:\n|$)', llm_output, re.DOTALL)
         if answer_match:
             answer_text = answer_match.group(1).strip()
-            print(f"\n检测到'最终答案：'，长度={len(answer_text)}")
-            print(f"返回 AgentFinish (最终答案)")
-            print(f"{'='*60}")
-            print(f"=== end parse (最终答案) ===")
-            print(f"{'='*60}\n")
+            app_logger.info(f"\n检测到'最终答案：'，长度={len(answer_text)}")
+            app_logger.info(f"返回 AgentFinish (最终答案)")
+            app_logger.info(f"{'='*60}")
+            app_logger.info(f"=== end parse (最终答案) ===")
+            app_logger.info(f"{'='*60}\n")
 
             return AgentFinish(
                 return_values={"output": answer_text},
@@ -269,11 +271,11 @@ class CustomOutputParser(AgentOutputParser):
         query_result_match = re.search(r'\*\*查询结果\*\*\s*(.+?)$', llm_output, re.DOTALL)
         if query_result_match:
             result_text = query_result_match.group(1).strip()
-            print(f"\n检测到'**查询结果**'，长度={len(result_text)}")
-            print(f"返回 AgentFinish (查询结果格式)")
-            print(f"{'='*60}")
-            print(f"=== end parse (查询结果) ===")
-            print(f"{'='*60}\n")
+            app_logger.info(f"\n检测到'**查询结果**'，长度={len(result_text)}")
+            app_logger.info(f"返回 AgentFinish (查询结果格式)")
+            app_logger.info(f"{'='*60}")
+            app_logger.info(f"=== end parse (查询结果) ===")
+            app_logger.info(f"{'='*60}\n")
 
             return AgentFinish(
                 return_values={"output": "**查询结果**\n" + result_text},
@@ -286,10 +288,10 @@ class CustomOutputParser(AgentOutputParser):
         # 让 Agent 继续迭代，而不是提前结束
 
         # 最终兜底：返回原始输出
-        print(f"\n最终兜底：返回原始输出")
-        print(f"{'='*60}")
-        print(f"=== end parse (兜底) ===")
-        print(f"{'='*60}\n")
+        app_logger.info(f"\n最终兜底：返回原始输出")
+        app_logger.info(f"{'='*60}")
+        app_logger.info(f"=== end parse (兜底) ===")
+        app_logger.info(f"{'='*60}\n")
 
         return AgentFinish(
             return_values={"output": llm_output.strip()},

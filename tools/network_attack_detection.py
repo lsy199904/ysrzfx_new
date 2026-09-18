@@ -20,7 +20,7 @@
 import json
 import logging
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig
 from tools.index_config import INDEX_SOURCE_PATTERN
@@ -30,17 +30,35 @@ from tools.ip_trace import ip_trace_request, build_trace_window
 logger = logging.getLogger(__name__)
 
 
+def _utc_to_cst(timestamp_str: str) -> str:
+    """将 ES 返回的 UTC 时间字符串转换为东八区（CST）时间字符串。"""
+    try:
+        ts_str = str(timestamp_str).strip()
+        ts_clean = ts_str.replace('Z', '').replace('+00:00', '').strip()
+        for fmt in ('%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S'):
+            try:
+                dt_utc = datetime.strptime(ts_clean, fmt)
+                dt_cst = dt_utc + timedelta(hours=8)
+                return dt_cst.strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                continue
+        return timestamp_str
+    except Exception as e:
+        logger.warning(f"[NetworkTrace] UTC 转 CST 失败: {e}，返回原值: {timestamp_str}")
+        return timestamp_str
+
+
 # PPL 查询模板
 PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
-| where type='utm' and subtype='ips'
-| where NOT (cidrmatch(srcip, "10.0.0.0/8") AND cidrmatch(dstip, "10.0.0.0/8"))
-| where level='alert'
-| where severity!='info' and severity!='low'
-| where action!='blocked' and action!='dropped'
-| where NOT like(attack,'%SQL.Injection%') AND NOT like(attack,'%TCP.Split.Handshake%')
-| where srcip!="202.76.24.1"
-| where srcip!="8.8.8.8"
-| fields @gid, type, subtype, srcip, dstip, dstport, attack, url, action, policyid, msg, devname, @timestamp_cst, user"""
+| where fortinet.firewall.type='utm' and fortinet.firewall.subtype='ips'
+| where NOT (cidrmatch(source.ip, "10.0.0.0/8") AND cidrmatch(destination.ip, "10.0.0.0/8"))
+| where log.level='alert'
+| where fortinet.firewall.severity!='info' and fortinet.firewall.severity!='low'
+| where event.action!='blocked' and event.action!='dropped'
+| where NOT like(fortinet.firewall.attack,'%SQL.Injection%') AND NOT like(fortinet.firewall.attack,'%TCP.Split.Handshake%')
+| where source.ip!="202.76.24.1"
+| where source.ip!="8.8.8.8"
+| fields @gid, fortinet.firewall.type, fortinet.firewall.subtype, source.ip, destination.ip, destination.port, fortinet.firewall.attack, url.original, event.action, rule.id, message, observer.name, @timestamp, source.user.name"""
 
 
 # 自定义压缩配置（可选，不传则使用默认配置）
@@ -62,7 +80,7 @@ def _calculate_ip_priority(raw_result: dict) -> list:
         
         ip_counts = {}
         for record in data:
-            ip = record.get("srcip")
+            ip = record.get("source.ip") or record.get("srcip")
             if ip:
                 ip_counts[ip] = ip_counts.get(ip, 0) + 1
         
@@ -93,27 +111,32 @@ def _calculate_ip_priority(raw_result: dict) -> list:
 
 
 def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str:
-    """提取指定 IP 的最早网络攻击时间"""
+    """提取指定 IP 的最早网络攻击时间（UTC → CST 转换）"""
     try:
         data = raw_result.get("data", [])
         if not data:
             return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
+
         ip_first_time = None
         for record in data:
-            ip = record.get("srcip")
+            ip = record.get("source.ip") or record.get("srcip")
             if ip == target_ip:
-                t = record.get("@timestamp_cst")
+                t = record.get("@timestamp")
                 if t:
                     ip_first_time = t
-        
+
         if ip_first_time:
-            logger.info(f"[NetworkTrace] IP {target_ip} 的最早攻击时间: {ip_first_time}")
-            return ip_first_time
-        
+            # 【修复】ES 返回的是 UTC 时间，需转换为 CST 供后续链路使用
+            cst_time = _utc_to_cst(ip_first_time)
+            logger.info(f"[NetworkTrace] IP {target_ip} 的最早攻击时间（UTC→CST）: {ip_first_time} → {cst_time}")
+            return cst_time
+
         logger.warning(f"[NetworkTrace] IP {target_ip} 未找到记录，回退到全局时间")
         first_record = data[-1] if data else {}
-        return first_record.get("@timestamp_cst", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        raw_ts = first_record.get("@timestamp", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        if raw_ts and raw_ts != datetime.now().strftime('%Y-%m-%d %H:%M:%S'):
+            return _utc_to_cst(raw_ts)
+        return raw_ts
     except Exception as e:
         logger.error(f"[NetworkTrace] 提取时间失败: {e}", exc_info=True)
         return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -204,7 +227,7 @@ def network_attack_request(
         filter_user=filter_user,
         gid=gid,
         compression_config=COMPRESSION_CONFIG,
-        ip_field="srcip",  # 网络攻击检测使用 srcip 字段（攻击源 IP）
+        ip_field="source.ip",  # 网络攻击检测使用 source.ip 字段（攻击源 IP）
     )
     
     raw_result_str = executor.execute()

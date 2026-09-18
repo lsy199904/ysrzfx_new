@@ -51,11 +51,26 @@ NODE_SYMBOLS = {
 
 
 def _get_field(record: dict, field_names: list, default: str = "") -> str:
-    """从记录中安全获取字段值"""
+    """从记录中安全获取字段值（支持嵌套字段如 source.ip）"""
     for name in field_names:
+        # 尝试直接获取（扁平结构）
         val = record.get(name, default)
         if val and val != default:
             return str(val)
+        
+        # 尝试嵌套获取（嵌套结构如 source.ip）
+        if '.' in name:
+            parts = name.split('.')
+            obj = record
+            for part in parts:
+                if isinstance(obj, dict):
+                    obj = obj.get(part, None)
+                else:
+                    obj = None
+                    break
+            if obj and obj != default:
+                return str(obj)
+    
     return default
 
 
@@ -236,16 +251,16 @@ def _build_attack_stages(timeline: list, records: list) -> list:
         {"phase": "RESOLUTION", "phase_name": "最终结果", "events": [], "key_details": {}},
     ]
 
-    # 按时间排序（使用 @timestamp_cst 字段）
-    sorted_records = sorted(records, key=lambda x: x.get("@timestamp_cst", ""))
+    # 按时间排序（使用 @timestamp 字段）
+    sorted_records = sorted(records, key=lambda x: x.get("@timestamp", ""))
 
     for record in sorted_records:
         # 直接从原始记录中解析 msg 字段
-        msg = record.get("msg", "") or ""
+        msg = record.get("message", "") or record.get("msg", "") or ""
         parsed = _parse_msg_info(msg)
         
         # 【增强】如果 msg 为空，尝试从 action 字段补充防火墙动作
-        action = record.get("action", "") or ""
+        action = record.get("event.action", "") or record.get("action", "") or ""
         if not msg and action:
             action_lower = action.lower()
             if "quarantin" in action_lower:
@@ -255,12 +270,12 @@ def _build_attack_stages(timeline: list, records: list) -> list:
 
         # 构建事件信息（使用 timeline 中的字段）
         event_info = {
-            "timestamp": record.get("@timestamp_cst", ""),
+            "timestamp": record.get("@timestamp", ""),
             "message": msg,
-            "user": record.get("user", "") or record.get("username", "") or "",
-            "action": record.get("action", ""),
-            "subtype": record.get("subtype", ""),
-            "attacker": record.get("attack_src", "") or record.get("srcip", ""),
+            "user": record.get("source.user.name", "") or record.get("user", "") or record.get("username", "") or "",
+            "action": record.get("event.action", "") or record.get("action", ""),
+            "subtype": record.get("fortinet.firewall.subtype", "") or record.get("subtype", ""),
+            "attacker": record.get("attack_src", "") or record.get("source.ip", "") or record.get("srcip", ""),
         }
 
         # 1. 端口探测阶段
@@ -310,7 +325,7 @@ def _build_attack_stages(timeline: list, records: list) -> list:
                 "attacker": event_info["attacker"],
             })
             if not stage["key_details"].get("action"):
-                stage["key_details"]["action"] = parsed.get("firewall_action")
+                stage["key_details"]["event.action", "action"] = parsed.get("firewall_action")
             if not stage["key_details"].get("rule") and parsed.get("firewall_rule"):
                 stage["key_details"]["rule"] = parsed.get("firewall_rule")
 
@@ -369,13 +384,13 @@ def _add_node(nodes_map: dict, identifier: str, node_type: str, record: dict,
         nid = f"device_{identifier}"
 
     # 提取时间戳
-    ts = record.get("@timestamp_cst", "") or ""
+    ts = record.get("@timestamp", "") or ""
 
     if nid in nodes_map:
         # 已存在，增加计数
         nodes_map[nid]["count"] = nodes_map[nid].get("count", 1) + 1
         # 合并攻击类型（使用 Fortigate 索引中实际存在的字段）
-        attack_type = _get_field(record, ["type", "subtype", "msg"])
+        attack_type = _get_field(record, ["fortinet.firewall.type", "type", "fortinet.firewall.subtype", "subtype", "message", "msg"])
         if attack_type and attack_type not in nodes_map[nid].get("attack_types", []):
             nodes_map[nid].setdefault("attack_types", []).append(str(attack_type))
         # 【新增】更新时间范围
@@ -397,7 +412,7 @@ def _add_node(nodes_map: dict, identifier: str, node_type: str, record: dict,
             "name": name or identifier,
             "type": node_type,
             "count": 1,
-            "attack_types": [_get_field(record, ["type", "subtype", "msg"])],
+            "attack_types": [_get_field(record, ["fortinet.firewall.type", "type", "fortinet.firewall.subtype", "subtype", "message", "msg"])],
             "first_seen": ts,   # 【新增】首次出现时间
             "last_seen": ts,    # 【新增】最后出现时间
             "timestamps": [ts] if ts else [],  # 【新增】所有时间戳
@@ -426,8 +441,15 @@ def build_graph_data(raw_data: dict) -> dict:
     # 获取实际数据（非压缩时取 data 数组）
     records = raw_data.get("data", [])
     if not records:
-        logger.warning("[build_graph_data] 数据数组为空")
+        logger.warning(f"[build_graph_data] 数据数组为空！raw_data keys: {list(raw_data.keys())}")
+        # 打印完整 raw_data 用于调试
+        logger.warning(f"[build_graph_data] 完整 raw_data: {json.dumps(raw_data, ensure_ascii=False)[:1000]}")
         return {"nodes": [], "edges": [], "stats": {"node_count": 0, "edge_count": 0, "type_distribution": {}}}
+    
+    logger.info(f"[build_graph_data] 开始处理 {len(records)} 条记录")
+    # 打印第一条记录的键，用于调试字段映射
+    if records:
+        logger.info(f"[build_graph_data] 第一条记录 keys: {list(records[0].keys())}")
 
     # ========== 1. 构建节点去重映射 ==========
     nodes_map = {}
@@ -438,19 +460,19 @@ def build_graph_data(raw_data: dict) -> dict:
 
         # ===== 提取基础节点 =====
         # 来源 IP（攻击者）
-        src_ip = _get_field(record, ["srcip"])
+        src_ip = _get_field(record, ["source.ip", "srcip", "attack_src"])
         if src_ip:
             _add_node(nodes_map, src_ip, "attacker", record, "ip")
 
         # 远程 IP / 目标 IP
         rem_ip = _get_field(record, ["remip"])
-        dst_ip = _get_field(record, ["dstip"])
+        dst_ip = _get_field(record, ["destination.ip", "dstip"])
         target_ip = rem_ip or dst_ip
         if target_ip:
             _add_node(nodes_map, target_ip, "host", record, "ip")
 
         # 用户名
-        username = _get_field(record, ["user", "username", "account"])
+        username = _get_field(record, ["source.user.name", "user", "username", "account"])
         if username and username not in ("-", "", "None", "null", "nan", "N/A"):
             _add_node(nodes_map, username, "user", record, "user", username)
 
@@ -460,34 +482,34 @@ def build_graph_data(raw_data: dict) -> dict:
             _add_node(nodes_map, devname, "oss", record, "device", devname)
 
         # ===== 提取策略节点 =====
-        policy_id = _get_field(record, ["policyid"])
-        policy_name = _get_field(record, ["policyname"])
+        policy_id = _get_field(record, ["rule.id", "policyid"])
+        policy_name = _get_field(record, ["rule.name", "policyname"])
         if policy_id and policy_id not in ("", "None", "null", "nan"):
             policy_display = policy_name if policy_name else f"Policy {policy_id}"
             policy_id_str = str(policy_id)
             _add_node(nodes_map, policy_id_str, "policy", record, "policy", policy_display)
 
         # ===== 提取动作节点 =====
-        action = _get_field(record, ["action"])
+        action = _get_field(record, ["event.action", "action"])
         if action and action not in ("", "None", "null", "nan"):
             action_display = _parse_action_name(action)
             action_id = f"action_{action.lower()}"
             _add_node(nodes_map, action_id, "action", record, "action", action_display)
 
         # ===== 提取子类型节点 =====
-        subtype = _get_field(record, ["subtype"])
+        subtype = _get_field(record, ["fortinet.firewall.subtype", "subtype"])
         if subtype and subtype not in ("", "None", "null", "nan"):
             subtype_id = f"subtype_{subtype.lower()}"
             _add_node(nodes_map, subtype_id, "subtype", record, "subtype", subtype)
 
         # ===== 提取应用节点 =====
-        app = _get_field(record, ["app"])
+        app = _get_field(record, ["application.name", "app"])
         if app and app not in ("", "None", "null", "nan"):
             app_id = f"app_{app.lower()}"
             _add_node(nodes_map, app_id, "app", record, "app", app)
 
         # ===== 从 msg 解析实体节点 =====
-        msg = _get_field(record, ["msg"])
+        msg = _get_field(record, ["message", "msg"])
         if msg:
             msg_info = _parse_msg_info(msg)
             if msg_info["entity_type"] and msg_info["entity_name"]:
@@ -506,13 +528,13 @@ def build_graph_data(raw_data: dict) -> dict:
     for record in records:
         if not isinstance(record, dict):
             continue
-        msg = _get_field(record, ["msg"])
+        msg = _get_field(record, ["message", "msg"])
         parsed = _parse_msg_info(msg) if msg else {}
-        action = _get_field(record, ["action"])
+        action = _get_field(record, ["event.action", "action"])
 
         # 提取关联的用户名和目标 IP
-        username = _get_field(record, ["user", "username", "account"])
-        target_ip = _get_field(record, ["remip"]) or _get_field(record, ["dstip"])
+        username = _get_field(record, ["source.user.name", "user", "username", "account"])
+        target_ip = _get_field(record, ["remip"]) or _get_field(record, ["destination.ip", "dstip"])
 
         # --- 登录状态 ---
         if parsed.get("entity_type") == "user" and username:
@@ -532,12 +554,12 @@ def build_graph_data(raw_data: dict) -> dict:
             # quarantine 动作本身标记为 blocked
             node_status_map[f"action_{action.lower()}"] = "blocked"
             # 如果有关联的 policy，标记为 blocked
-            policy_id = _get_field(record, ["policyid"])
+            policy_id = _get_field(record, ["rule.id", "policyid"])
             if policy_id:
                 node_status_map[str(policy_id)] = "blocked"
         elif action and action.lower() in ("accept", "pass", "allowed"):
             node_status_map[f"action_{action.lower()}"] = "allowed"
-            policy_id = _get_field(record, ["policyid"])
+            policy_id = _get_field(record, ["rule.id", "policyid"])
             if policy_id:
                 node_status_map[str(policy_id)] = "allowed"
 
@@ -605,22 +627,22 @@ def build_graph_data(raw_data: dict) -> dict:
     # 按时间排序 records，确保边的顺序符合时间线
     sorted_records = sorted(
         [r for r in records if isinstance(r, dict)],
-        key=lambda x: x.get("@timestamp_cst", "") or ""
+        key=lambda x: x.get("@timestamp", "") or ""
     )
 
     for record in sorted_records:
-        src_ip = _get_field(record, ["srcip"])
+        src_ip = _get_field(record, ["source.ip", "srcip"])
         rem_ip = _get_field(record, ["remip"])
-        dst_ip = _get_field(record, ["dstip"])
+        dst_ip = _get_field(record, ["destination.ip", "dstip"])
         target_ip = rem_ip or dst_ip
-        username = _get_field(record, ["user", "username", "account"])
+        username = _get_field(record, ["source.user.name", "user", "username", "account"])
         devname = _get_field(record, ["devname", "device"])
-        policy_id = _get_field(record, ["policyid"])
-        action = _get_field(record, ["action"])
-        ts = record.get("@timestamp_cst", "") or ""
-        subtype = _get_field(record, ["subtype"])
-        app = _get_field(record, ["app"])
-        msg = _get_field(record, ["msg"])
+        policy_id = _get_field(record, ["rule.id", "policyid"])
+        action = _get_field(record, ["event.action", "action"])
+        ts = record.get("@timestamp", "") or ""
+        subtype = _get_field(record, ["fortinet.firewall.subtype", "subtype"])
+        app = _get_field(record, ["application.name", "app"])
+        msg = _get_field(record, ["message", "msg"])
 
         # --- 第 1 层：IP 连接（攻击者 -> 目标） ---
         if src_ip and target_ip and src_ip != target_ip:
@@ -853,23 +875,23 @@ def build_graph_data(raw_data: dict) -> dict:
     for i, record in enumerate(records):
         if not isinstance(record, dict):
             continue
-        ts = record.get("@timestamp_cst", "")
+        ts = record.get("@timestamp", "")
         if not ts:
             continue
         # 提取该事件的关键信息
         event = {
             "index": i,
             "timestamp": ts,
-            "action": _get_field(record, ["action"]),
-            "subtype": _get_field(record, ["subtype"]),
-            "user": _get_field(record, ["user", "username", "account"]),
+            "action": _get_field(record, ["event.action", "action"]),
+            "subtype": _get_field(record, ["fortinet.firewall.subtype", "subtype"]),
+            "user": _get_field(record, ["source.user.name", "user", "username", "account"]),
             "devname": _get_field(record, ["devname", "device"]),
-            "msg": _get_field(record, ["msg"]),
-            "policyid": _get_field(record, ["policyid"]),
+            "msg": _get_field(record, ["message", "msg"]),
+            "policyid": _get_field(record, ["rule.id", "policyid"]),
         }
         # 提取动作中文显示
-        if event["action"]:
-            event["action_display"] = _parse_action_name(event["action"])
+        if event["event.action", "action"]:
+            event["action_display"] = _parse_action_name(event["event.action", "action"])
         timeline.append(event)
     # 按时间戳升序排序
     timeline.sort(key=lambda x: x.get("timestamp", ""))
@@ -907,11 +929,11 @@ def build_graph_data(raw_data: dict) -> dict:
 # 【重要】仅保留 IP 基础过滤 + 关键字段筛选。
 # 时间条件由 build_ppl_query() 统一注入到 search 命令行。
 # 【字段对齐】必须与 brute_force.py:40 保持一致，Fortigate 索引中实际存在这些字段：
-#   @timestamp_cst, user, attack_src, srcip, remip, action, reason, msg, subtype, @gid, devname, policyid
+#   @timestamp, source.user.name, attack_src, source.ip, remip, event.action, event.reason, message, fortinet.firewall.subtype, @gid, observer.name, rule.id
 # 【删除】以下字段在 Fortigate 索引中不存在，OpenSearch 会报 IllegalArgumentException：
 #   app, policyname, hostname, srcport, proto, service, dstport
 IP_TRACE_PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
-| fields @timestamp_cst, srcip, dstip, remip, action, reason, msg, subtype, type, user, devname, policyid, @gid, attack_src"""
+| fields @timestamp, source.ip, destination.ip, remip, event.action, event.reason, message, fortinet.firewall.subtype, fortinet.firewall.type, source.user.name, observer.name, rule.id, @gid, attack_src"""
 
 
 # 溯源查询压缩配置
@@ -962,7 +984,7 @@ def ip_trace_request(
         filter_ip=ip,  # 同时传入 filter_ip 以便 ToolExecutor 处理
         gid=gid,
         compression_config=IP_TRACE_COMPRESSION_CONFIG,
-        ip_field="srcip",  # 溯源使用 srcip 作为主字段
+        ip_field=["source.ip", "attack_src"],  # 【修复】同时过滤 source.ip 和 attack_src，确保覆盖两种场景
     )
     
     result = executor.execute()
@@ -1021,12 +1043,19 @@ def _build_trace_result(raw_result: str, ip: str, start_time: str, end_time: str
     graph_data = {}
     try:
         raw_data = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+        logger.info(f"[build_trace_result] raw_result 前 500 字符: {raw_result[:500]}")
+        logger.info(f"[build_trace_result] raw_data keys: {list(raw_data.keys()) if isinstance(raw_data, dict) else 'N/A'}")
+        logger.info(f"[build_trace_result] raw_data.get('data') 类型: {type(raw_data.get('data'))}, 长度: {len(raw_data.get('data', [])) if isinstance(raw_data.get('data'), list) else 'N/A'}")
+        
         if raw_data and isinstance(raw_data, dict) and raw_data.get("data"):
             # 【修复】构建图前先清洗 NaN/Infinity
             raw_data = _sanitize_nan(raw_data)
             graph_data = build_graph_data(raw_data)
+            app_logger.info(f"[build_trace_result] graph_data 构建结果: nodes={len(graph_data.get('nodes', []))}, edges={len(graph_data.get('edges', []))}")
+        else:
+            app_logger.warning(f"[build_trace_result] raw_data 为空或 data 字段缺失/为空")
     except Exception as e:
-        logger.warning(f"[build_trace_result] 构建图数据失败：{e}")
+        logger.warning(f"[build_trace_result] 构建图数据失败：{e}", exc_info=True)
 
     # 【修复】整个返回结构清洗 NaN
     return _sanitize_nan({

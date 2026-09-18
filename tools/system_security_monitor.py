@@ -32,17 +32,17 @@ logger = logging.getLogger(__name__)
 
 # PPL 查询模板
 PPL_TEMPLATE = rf"""search source=`{INDEX_SOURCE_PATTERN}`
-| where subtype='system'
-| where logdesc="Device rebooted" OR logdesc="Device shutdown"
-| eval msg1=like(msg,'%scheduled daily restart%'), msg2=like(msg,'%upgrade firmware%')
+| where fortinet.firewall.subtype='system'
+| where rule.description="Device rebooted" OR rule.description="Device shutdown"
+| eval msg1=like(message,'%scheduled daily restart%'), msg2=like(message,'%upgrade firmware%')
 | where msg1=false and msg2=false
-| parse ui '.*\((?<uiscrip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\).*'
+| parse fortinet.firewall.ui '.*\((?<uiscrip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\).*'
 | where isnotnull(uiscrip) AND uiscrip != ''
-| where user NOT in ("c_admin", "cpc-ops")
+| where source.user.name NOT in ("c_admin", "cpc-ops")
 | where isnotnull(uiscrip) AND uiscrip != '' AND NOT (cidrmatch(uiscrip, "202.76.24.0/27") OR cidrmatch(uiscrip, "202.88.96.0/27"))
-| eval out5=if(like(user, "s%") OR like(user, "op%"), 'discard', "keep")
+| eval out5=if(like(source.user.name, "s%") OR like(source.user.name, "op%"), 'discard', "keep")
 | where out5="keep"
-| fields type,action, @timestamp_cst, @gid, devname, user, msg, logdesc, subtype, policyid, uiscrip"""
+| fields fortinet.firewall.type,event.action, @timestamp, @gid, observer.name, source.user.name, message, rule.description, fortinet.firewall.subtype, rule.id, uiscrip"""
 
 # 自定义压缩配置（可选，不传则使用默认配置）
 COMPRESSION_CONFIG = CompressionConfig(
@@ -63,7 +63,7 @@ def _calculate_ip_priority(raw_result: dict) -> list:
         
         ip_counts = {}
         for record in data:
-            ip = record.get("uiscrip") or record.get("srcip")
+            ip = record.get("uiscrip") or record.get("source.ip") or record.get("srcip")
             if ip:
                 ip_counts[ip] = ip_counts.get(ip, 0) + 1
         
@@ -102,9 +102,9 @@ def _get_ip_first_event_time(raw_result: dict, target_ip: str) -> str:
         
         ip_first_time = None
         for record in data:
-            ip = record.get("uiscrip") or record.get("srcip")
+            ip = record.get("uiscrip") or record.get("source.ip") or record.get("srcip")
             if ip == target_ip:
-                t = record.get("@timestamp_cst")
+                t = record.get("@timestamp")
                 if t:
                     ip_first_time = t
         
@@ -114,7 +114,7 @@ def _get_ip_first_event_time(raw_result: dict, target_ip: str) -> str:
         
         logger.warning(f"[SystemTrace] IP {target_ip} 未找到记录，回退到全局时间")
         first_record = data[-1] if data else {}
-        return first_record.get("@timestamp_cst", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        return first_record.get("@timestamp", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     except Exception as e:
         logger.error(f"[SystemTrace] 提取时间失败: {e}", exc_info=True)
         return datetime.now().strftime('%Y-%m-%d %H:%M:%S')

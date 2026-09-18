@@ -29,18 +29,42 @@ from tools.index_config import INDEX_SOURCE_PATTERN
 from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
 from tools.ip_trace import ip_trace_request, build_trace_window
 
+
+def _utc_to_cst(timestamp_str: str) -> str:
+    """将 ES 返回的 UTC 时间字符串转换为东八区（CST）时间字符串。
+
+    ES 的 @timestamp 字段以 UTC 存储，如 '2026-03-26T02:01:55.000Z'。
+    由于 build_trace_window + build_ppl_query 链路期望输入为 CST 时间，
+    此处将 UTC 转换回 CST，确保溯源时间窗口计算正确。
+    """
+    try:
+        ts_str = str(timestamp_str).strip()
+        # 移除可能的时区后缀
+        ts_clean = ts_str.replace('Z', '').replace('+00:00', '').strip()
+        for fmt in ('%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S'):
+            try:
+                dt_utc = datetime.strptime(ts_clean, fmt)
+                dt_cst = dt_utc + timedelta(hours=8)
+                return dt_cst.strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                continue
+        return timestamp_str
+    except Exception as e:
+        logger.warning(f"[Trace] UTC 转 CST 失败: {e}，返回原值: {timestamp_str}")
+        return timestamp_str
+
 logger = logging.getLogger(__name__)
 
 
 # PPL 查询模板
 PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
 
-| where (subtype='system' and action='login' and status='failed') OR (subtype='vpn' and msg='SSL user failed to logged in')
-| where reason != 'ip_blocked'
-| where srcip != '218.92.0.39'
-| eval attack_src = case(isnotnull(srcip), srcip else remip)
-| fields @timestamp_cst, user, attack_src, srcip, remip, action, reason, msg, subtype, @gid, devname, policyid
-| sort - @timestamp_cst"""
+| where (fortinet.firewall.subtype='system' and event.action='login' and fortinet.firewall.status='failed') OR (fortinet.firewall.subtype='vpn' and message='SSL user failed to logged in')
+| where event.reason != 'ip_blocked'
+| where source.ip != '218.92.0.39'
+| eval attack_src = if(isnotnull(source.ip), cast(source.ip AS STRING), cast(destination.ip AS STRING))
+| fields @timestamp, source.user.name, attack_src, source.ip, destination.ip, event.action, event.reason, message, fortinet.firewall.subtype, @gid, observer.name, rule.id
+| sort - @timestamp"""
 
 
 # 压缩配置（与其他工具统一）
@@ -65,7 +89,7 @@ def _calculate_ip_priority(raw_result: dict) -> list:
         # 统计每个 IP 的出现次数
         ip_counts = {}
         for record in data:
-            ip = record.get("attack_src") or record.get("srcip") or record.get("remip")
+            ip = record.get("attack_src") or record.get("source.ip") or record.get("destination.ip")
             if ip:
                 ip_counts[ip] = ip_counts.get(ip, 0) + 1
         
@@ -105,7 +129,7 @@ def _calculate_ip_priority(raw_result: dict) -> list:
 
 
 def _get_first_attack_time(raw_result: dict) -> str:
-    """从暴力破解结果中提取最早的攻击时间"""
+    """从暴力破解结果中提取最早的攻击时间（UTC → CST 转换）"""
     try:
         data = raw_result.get("data", [])
         if not data:
@@ -114,13 +138,15 @@ def _get_first_attack_time(raw_result: dict) -> str:
 
         # 数据已经按时间降序排序，取最后一条即为最早
         first_record = data[-1]
-        attack_time = first_record.get("@timestamp_cst")
+        attack_time = first_record.get("@timestamp")
 
         if attack_time:
-            logger.info(f"[Trace] 提取到最早攻击时间: {attack_time}")
-            return attack_time
+            # 【修复】ES 返回的是 UTC 时间，需转换为 CST 供后续链路使用
+            cst_time = _utc_to_cst(attack_time)
+            logger.info(f"[Trace] 提取到最早攻击时间（UTC→CST）: {attack_time} → {cst_time}")
+            return cst_time
 
-        logger.warning("[Trace] 未找到 @timestamp_cst 字段，使用当前时间")
+        logger.warning("[Trace] 未找到 @timestamp 字段，使用当前时间")
         return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     except Exception as e:
@@ -129,7 +155,7 @@ def _get_first_attack_time(raw_result: dict) -> str:
 
 
 def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str:
-    """【新增】提取指定 IP 的最早攻击时间（用于该 IP 自己的溯源时间窗口）"""
+    """【新增】提取指定 IP 的最早攻击时间（UTC → CST 转换）"""
     try:
         data = raw_result.get("data", [])
         if not data:
@@ -139,15 +165,17 @@ def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str:
         # 数据按时间降序排列，遍历找该 IP 的最早一条（即最后匹配的那条）
         ip_first_time = None
         for record in data:
-            ip = record.get("attack_src") or record.get("srcip") or record.get("remip")
+            ip = record.get("attack_src") or record.get("source.ip") or record.get("destination.ip")
             if ip == target_ip:
-                t = record.get("@timestamp_cst")
+                t = record.get("@timestamp")
                 if t:
                     ip_first_time = t  # 不断覆盖，最后保留的是最早的
 
         if ip_first_time:
-            logger.info(f"[Trace] IP {target_ip} 的最早攻击时间: {ip_first_time}")
-            return ip_first_time
+            # 【修复】ES 返回的是 UTC 时间，需转换为 CST 供后续链路使用
+            cst_time = _utc_to_cst(ip_first_time)
+            logger.info(f"[Trace] IP {target_ip} 的最早攻击时间（UTC→CST）: {ip_first_time} → {cst_time}")
+            return cst_time
 
         # 没找到该 IP 的记录，回退到全局最早时间
         logger.warning(f"[Trace] IP {target_ip} 在数据中未找到记录，回退到全局最早时间")

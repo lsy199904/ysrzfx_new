@@ -398,7 +398,7 @@ def _generate_index_list(start_time: str, end_time: str) -> str:
     """
     返回固定索引模式。
 
-    新索引不按日期拆分，日期过滤统一通过 @timestamp_cst 完成。
+    新索引不按日期拆分，日期过滤统一通过 @timestamp 完成。
     
     Args:
         start_time: 开始时间（格式：YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD）
@@ -412,22 +412,61 @@ def _generate_index_list(start_time: str, end_time: str) -> str:
 
 def _to_utc_iso_format(dt: datetime) -> str:
     """
-    将 datetime 转换为 ISO 格式（东八区时间，不带 Z 后缀）
-    输入时间就是东八区时间，保持原样输出，与@timestamp_cst 字段时区一致
+    将东八区时间转换为 UTC 时间（ISO 格式）
+    OpenSearch 的 @timestamp 字段存储的是 UTC 时间，
+    用户输入的是东八区时间，查询时需要将东八区减 8 小时转为 UTC
     
     Args:
         dt: datetime 对象（东八区时间）
     
     Returns:
-        str: ISO 格式的时间字符串（不带 Z 后缀）
+        str: UTC 时间的 ISO 格式字符串（不带 Z 后缀）
     """
-    # 输入时间就是东八区时间，直接转换为 ISO 格式
-    return dt.strftime('%Y-%m-%dT%H:%M:%S')
+    # 东八区转 UTC：减去 8 小时
+    utc_dt = dt - timedelta(hours=8)
+    return utc_dt.strftime('%Y-%m-%dT%H:%M:%S')
+
+
+def _convert_records_to_utc8(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    将查询返回的 UTC 时间记录转换为东八区时间
+    OpenSearch 返回的 @timestamp 是 UTC 时间，需要加 8 小时转回东八区再给 LLM
+    
+    Args:
+        records: 从 ES 查询返回的记录列表（UTC 时间）
+    
+    Returns:
+        List[Dict[str, Any]]: 东八区时间的记录列表
+    """
+    converted = []
+    for record in records:
+        new_record = record.copy()
+        # 转换 @timestamp 字段
+        ts = new_record.get('@timestamp')
+        if ts:
+            try:
+                # 解析时间字符串（可能带时区后缀，也可能不带）
+                ts_str = str(ts)
+                # 移除可能的时区后缀 Z 或 +00:00
+                ts_clean = ts_str.replace('Z', '').replace('+00:00', '').strip()
+                # 尝试解析
+                if 'T' in ts_clean:
+                    dt_utc = datetime.strptime(ts_clean, '%Y-%m-%dT%H:%M:%S')
+                else:
+                    dt_utc = datetime.strptime(ts_clean, '%Y-%m-%d %H:%M:%S')
+                # UTC 转东八区：加 8 小时
+                dt_cst = dt_utc + timedelta(hours=8)
+                new_record['@timestamp'] = dt_cst.strftime('%Y-%m-%d %H:%M:%S')
+            except (ValueError, TypeError):
+                # 解析失败保留原值
+                pass
+        converted.append(new_record)
+    return converted
 
 
 def build_ppl_query(ppl_template: str, start_time: str = None, end_time: str = None,
                     filter_ip: str = None, filter_user: str = None,
-                    gid: str = None, ip_field: str = "srcip",
+                    gid: str = None, ip_field: str = "source.ip",
                     gid_scope: dict = None) -> str:
     """
     根据参数构建完整的 PPL 查询语句
@@ -478,19 +517,24 @@ def build_ppl_query(ppl_template: str, start_time: str = None, end_time: str = N
                 if parsed:
                     end_dt = datetime.strptime(parsed, '%Y-%m-%d %H:%M:%S')
     
-    # 新索引不包含日期；日期过滤通过 @timestamp_cst 完成。
+    # 新索引不包含日期；日期过滤通过 @timestamp 完成。
     if start_dt:
-        time_conditions.append(f"@timestamp_cst >= '{_to_utc_iso_format(start_dt)}'")
+        time_conditions.append(f"@timestamp >= '{_to_utc_iso_format(start_dt)}'")
     
     if end_dt:
-        time_conditions.append(f"@timestamp_cst <= '{_to_utc_iso_format(end_dt)}'")
+        time_conditions.append(f"@timestamp <= '{_to_utc_iso_format(end_dt)}'")
     
     # 收集其他过滤条件（放在 where 子句中）
     if filter_ip and filter_ip not in ('', 'None', 'none', 'null', 'Null'):
-        where_conditions.append(f"{ip_field} = '{filter_ip}'")
+        # 【修复】支持多字段过滤：如果 ip_field 是列表，则生成 OR 条件
+        if isinstance(ip_field, list):
+            ip_cond = " or ".join(f"{f} = '{filter_ip}'" for f in ip_field)
+            where_conditions.append(f"({ip_cond})")
+        else:
+            where_conditions.append(f"{ip_field} = '{filter_ip}'")
     
     if filter_user and filter_user not in ('', 'None', 'none', 'null', 'Null'):
-        where_conditions.append(f"user = '{filter_user}'")
+        where_conditions.append(f"source.user.name = '{filter_user}'")
 
     # 【数据权限】gid 白名单处理
     allowed_gids = None
@@ -534,7 +578,7 @@ def build_ppl_query(ppl_template: str, start_time: str = None, end_time: str = N
 
 def build_aggregate_query(ppl_template: str, start_time: str = None, end_time: str = None,
                           group_by: str = "srcip", gid: str = None,
-                          time_field: str = "@timestamp_cst",
+                          time_field: str = "@timestamp",
                           gid_scope: dict = None) -> str:
     """
     构建聚合查询的 PPL 语句（通用版本）
@@ -762,7 +806,7 @@ def query_es(ppl_query: str, user: str = None, password: str = None, debug_info:
     # 【调试日志】记录 PPL 查询关键信息
     print(f"[ES_QUERY] PPL 查询长度：{len(ppl_query)} 字符")
     # 检查是否包含时间过滤条件
-    has_time_filter = "@timestamp_cst >=" in ppl_query or "@timestamp_cst <=" in ppl_query or "@timestamp_cst >" in ppl_query
+    has_time_filter = "@timestamp >=" in ppl_query or "@timestamp <=" in ppl_query or "@timestamp >" in ppl_query
     print(f"[ES_QUERY] 包含时间过滤：{'是' if has_time_filter else '否'}")
     if not has_time_filter:
         print(f"[ES_QUERY] [警告] PPL 查询缺少时间过滤条件，可能导致 ES 拒绝查询！")
@@ -822,6 +866,9 @@ def query_es(ppl_query: str, user: str = None, password: str = None, debug_info:
             columns = [field.get("name") for field in schema]
             df = pd.DataFrame(datarows, columns=columns)
             records = df.to_dict('records')
+            
+            # 将 UTC 时间记录转换为东八区时间，方便 LLM 理解
+            records = _convert_records_to_utc8(records)
             
             print(f"[ES_QUERY] 查询成功，返回 {len(records)} 条记录")
             print(f"{'='*60}\n")
