@@ -49,10 +49,50 @@ NODE_SYMBOLS = {
     "app": "roundRect",
 }
 
+# 左侧为旧图谱代码字段，右侧为当前索引字段。
+FIELD_ALIASES = {
+    "subtype": ["fortinet.firewall.subtype"],
+    "action": ["event.action"],
+    "status": ["fortinet.firewall.status"],
+    "msg": ["message"],
+    "reason": ["event.reason"],
+    "srcip": ["source.ip"],
+    "remip": ["destination.ip"],
+    "devname": ["observer.name"],
+    "user": ["source.user.name"],
+    "policyid": ["rule.id"],
+    "dstport": ["destination.port"],
+    "logdesc": ["rule.description"],
+    "type": ["fortinet.firewall.type"],
+    "attack": ["fortinet.firewall.attack"],
+    "url": ["url.original"],
+    "srccountry": ["fortinet.firewall.srccountry"],
+    "cfgpath": ["fortinet.firewall.cfgpath"],
+    "cfgobj": ["fortinet.firewall.cfgobj"],
+    "devid": ["observer.serial_number"],
+    "ui": ["fortinet.firewall.ui"],
+    "dstip": ["destination.ip"],
+    "app": ["fortinet.firewall.app"],
+    "policyname": ["rule.name"],
+    "host": ["@host"],
+}
+
 
 def _get_field(record: dict, field_names: list, default: str = "") -> str:
     """从记录中安全获取字段值（支持嵌套字段如 source.ip）"""
+    candidates = []
     for name in field_names:
+        candidates.append(name)
+        candidates.extend(FIELD_ALIASES.get(name, []))
+        for legacy_name, aliases in FIELD_ALIASES.items():
+            if name in aliases:
+                candidates.append(legacy_name)
+
+    seen = set()
+    for name in candidates:
+        if name in seen:
+            continue
+        seen.add(name)
         # 尝试直接获取（扁平结构）
         val = record.get(name, default)
         if val and val != default:
@@ -256,11 +296,11 @@ def _build_attack_stages(timeline: list, records: list) -> list:
 
     for record in sorted_records:
         # 直接从原始记录中解析 msg 字段
-        msg = record.get("message", "") or record.get("msg", "") or ""
+        msg = _get_field(record, ["msg", "message"])
         parsed = _parse_msg_info(msg)
         
         # 【增强】如果 msg 为空，尝试从 action 字段补充防火墙动作
-        action = record.get("event.action", "") or record.get("action", "") or ""
+        action = _get_field(record, ["action", "event.action"])
         if not msg and action:
             action_lower = action.lower()
             if "quarantin" in action_lower:
@@ -272,10 +312,10 @@ def _build_attack_stages(timeline: list, records: list) -> list:
         event_info = {
             "timestamp": record.get("@timestamp", ""),
             "message": msg,
-            "user": record.get("source.user.name", "") or record.get("user", "") or record.get("username", "") or "",
-            "action": record.get("event.action", "") or record.get("action", ""),
-            "subtype": record.get("fortinet.firewall.subtype", "") or record.get("subtype", ""),
-            "attacker": record.get("attack_src", "") or record.get("source.ip", "") or record.get("srcip", ""),
+            "user": _get_field(record, ["user", "source.user.name", "username", "account"]),
+            "action": _get_field(record, ["action", "event.action"]),
+            "subtype": _get_field(record, ["subtype", "fortinet.firewall.subtype"]),
+            "attacker": _get_field(record, ["attack_src", "srcip", "source.ip"]),
         }
 
         # 1. 端口探测阶段
@@ -475,8 +515,13 @@ def build_graph_data(raw_data: dict) -> dict:
         if username and username not in ("-", "", "None", "null", "nan", "N/A"):
             _add_node(nodes_map, username, "user", record, "user", username)
 
+        # @host 是新索引中的主机字段；保留 host 作为旧字段兼容。
+        host_name = _get_field(record, ["host", "@host"])
+        if host_name:
+            _add_node(nodes_map, host_name, "host", record, "host", host_name)
+
         # 设备名
-        devname = _get_field(record, ["observer.name", "devname", "device"])
+        devname = _get_field(record, ["devname", "device"])
         if devname:
             _add_node(nodes_map, devname, "oss", record, "device", devname)
 
@@ -634,7 +679,8 @@ def build_graph_data(raw_data: dict) -> dict:
         # 新 ECS 索引中 remip 映射为 destination.ip；remip 仅作旧数据兼容。
         target_ip = _get_field(record, ["destination.ip", "dstip", "remip"])
         username = _get_field(record, ["source.user.name", "user", "username", "account"])
-        devname = _get_field(record, ["observer.name", "devname", "device"])
+        devname = _get_field(record, ["devname", "device"])
+        host_name = _get_field(record, ["host", "@host"])
         policy_id = _get_field(record, ["rule.id", "policyid"])
         action = _get_field(record, ["event.action", "action"])
         ts = record.get("@timestamp", "") or ""
@@ -683,6 +729,19 @@ def build_graph_data(raw_data: dict) -> dict:
                         "timestamp": ts,
                         "edge_status": _compute_edge_status(target_ip, device_id),
                     })
+
+        # 目标 IP 与 @host 的关系；相同值时不重复连边。
+        if target_ip and host_name and target_ip != host_name:
+            edge_key = (target_ip, host_name)
+            if edge_key not in edge_set:
+                edge_set.add(edge_key)
+                edges.append({
+                    "source": target_ip,
+                    "target": host_name,
+                    "relation": "resolves_to",
+                    "timestamp": ts,
+                    "edge_status": _compute_edge_status(target_ip, host_name),
+                })
 
         # --- 第 3 层：用户与设备/动作的关系 ---
         user_id = f"user_{username}" if username and username not in ("-", "", "None", "null") else None
@@ -926,10 +985,10 @@ def build_graph_data(raw_data: dict) -> dict:
 # 通用溯源 PPL 模板
 # 【重要】仅保留 IP 基础过滤 + 关键字段筛选。
 # 时间条件由 build_ppl_query() 统一注入到 search 命令行。
-# 【字段对齐】这里只能使用当前 Fortigate 索引中已验证存在的 ECS 字段。
-# PPL 的 fields 命令引用未映射字段会让整个查询返回 HTTP 400。
+# 【字段对齐】统一使用当前索引字段；旧字段名由 FIELD_ALIASES 兼容。
+# 这些字段分别覆盖账号、动作、子类型、状态、主机、设备、策略和攻击详情。
 IP_TRACE_PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
-| fields @timestamp, source.ip, destination.ip, event.action, event.reason, message, fortinet.firewall.subtype, source.user.name, observer.name, rule.id, @gid"""
+| fields @timestamp, @host, source.ip, destination.ip, destination.port, event.action, event.reason, message, fortinet.firewall.subtype, fortinet.firewall.status, fortinet.firewall.type, fortinet.firewall.attack, source.user.name, observer.name, observer.serial_number, rule.id, rule.name, rule.description, url.original, @gid"""
 
 
 # 溯源查询压缩配置

@@ -27,7 +27,7 @@ except ImportError:
     sys.modules["langchain.schema"] = schema_stub
 
 from tools.brute_force import _get_ip_first_attack_time, _normalize_attack_time
-from tools.ip_trace import IP_TRACE_PPL_TEMPLATE, _build_trace_result
+from tools.ip_trace import IP_TRACE_PPL_TEMPLATE, _build_trace_result, build_graph_data
 
 
 class GraphDataRegressionTests(unittest.TestCase):
@@ -62,6 +62,9 @@ class GraphDataRegressionTests(unittest.TestCase):
         self.assertNotIn("attack_src", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("source.ip", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("destination.ip", IP_TRACE_PPL_TEMPLATE)
+        self.assertIn("@host", IP_TRACE_PPL_TEMPLATE)
+        self.assertIn("fortinet.firewall.status", IP_TRACE_PPL_TEMPLATE)
+        self.assertIn("rule.id", IP_TRACE_PPL_TEMPLATE)
 
     def test_trace_http_error_is_not_reported_as_success(self):
         raw_result = json.dumps(
@@ -113,6 +116,42 @@ class GraphDataRegressionTests(unittest.TestCase):
             "device_GuZ_OFFICE_500E",
             {node["id"] for node in graph["nodes"]},
         )
+
+    def test_current_field_mapping_restores_graph_chain_nodes(self):
+        records = [
+            {
+                "@timestamp": "2026-03-26 11:03:21",
+                "@host": "10.180.3.147",
+                "source.ip": "10.180.120.160",
+                "destination.ip": "10.180.3.147",
+                "source.user.name": "li_si",
+                "observer.name": "GuZ_OFFICE_500E",
+                "event.action": "delete",
+                "fortinet.firewall.subtype": "config",
+                "fortinet.firewall.status": "success",
+                "message": "Local user li_si has been deleted",
+                "rule.id": "8.0",
+                "rule.name": "Policy 8.0",
+            },
+            {
+                "@timestamp": "2026-03-26 11:03:22",
+                "@host": "10.180.3.147",
+                "source.ip": "10.180.120.160",
+                "destination.ip": "10.180.3.147",
+                "source.user.name": "support",
+                "observer.name": "GuZ_OFFICE_500E",
+                "event.action": "login",
+                "fortinet.firewall.subtype": "system",
+                "fortinet.firewall.status": "failed",
+                "message": "Login failed for user support",
+            },
+        ]
+        graph = build_graph_data({"data": records})
+        node_types = {node["type"] for node in graph["nodes"]}
+        self.assertTrue({"attacker", "host", "user", "oss", "action", "subtype"} <= node_types)
+        self.assertIn("8.0", {node["id"] for node in graph["nodes"]})
+        relations = {edge["relation"] for edge in graph["edges"]}
+        self.assertTrue({"uses_account", "performs_action", "has_subtype"} <= relations)
 
 
 if __name__ == "__main__":
