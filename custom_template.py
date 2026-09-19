@@ -53,6 +53,10 @@ class CustomOutputParser(AgentOutputParser):
     3. 其他情况 → AgentFinish（LLM 总结或兜底）
     """
 
+    def __init__(self, is_chinese: bool = True):
+        super().__init__()
+        self.is_chinese = is_chinese
+
     def parse(self, llm_output: str) -> AgentFinish | tuple[dict[str, str], str] | AgentAction:
         """
         解析 LLM 输出，决定是继续调用工具还是结束
@@ -123,8 +127,13 @@ class CustomOutputParser(AgentOutputParser):
                 else:
                     # 完全无法提取任何内容
                     app_logger.info(f"所有策略均失败，返回截断提示")
+                    interrupted_message = (
+                        "抱歉，模型推理过程被中断，请重新提问。"
+                        if self.is_chinese
+                        else "Sorry, the model reasoning was interrupted. Please try again."
+                    )
                     return AgentFinish(
-                        return_values={"output": "抱歉，模型推理过程被中断，请重新提问。"},
+                        return_values={"output": interrupted_message},
                         log=llm_output,
                     )
 
@@ -219,9 +228,8 @@ class CustomOutputParser(AgentOutputParser):
                         app_logger.info(f"=== end parse (兜底提示) ===")
                         app_logger.info(f"{'='*60}\n")
 
-                        return AgentFinish(
-                            return_values={
-                                "output": (
+                        if self.is_chinese:
+                            fallback_message = (
                                     "抱歉，我暂时无法理解您的请求。建议您：\n\n"
                                     "1. **暴力破解查询**：'今天有哪些暴力破解攻击记录？'\n"
                                     "2. **账户安全查询**：'最近 7 天有没有异常的用户创建或删除操作？'\n"
@@ -229,8 +237,20 @@ class CustomOutputParser(AgentOutputParser):
                                     "4. **系统安全查询**：'防火墙设备最近有没有异常重启记录？'\n"
                                     "5. **自由日志查询**：'查询今天 srcip=192.168.1.1 的所有日志'\n\n"
                                     "请尝试使用以上方式提问，我会更好地帮助您。"
-                                )
-                            },
+                            )
+                        else:
+                            fallback_message = (
+                                "Sorry, I could not understand the request. Please try one of these examples:\n\n"
+                                "1. Brute-force attack query: 'What brute-force attacks occurred today?'\n"
+                                "2. Account security query: 'Were there any unusual user creation or deletion events in the last 7 days?'\n"
+                                "3. Network attack query: 'Were any IPS intrusion alerts detected today?'\n"
+                                "4. System security query: 'Were there any unusual firewall reboot events recently?'\n"
+                                "5. Free log query: 'Query all logs with srcip=192.168.1.1 today'\n\n"
+                                "Please try again using one of these formats."
+                            )
+
+                        return AgentFinish(
+                            return_values={"output": fallback_message},
                             log=llm_output,
                         )
 

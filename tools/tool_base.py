@@ -564,7 +564,11 @@ class ToolExecutor:
             if allowed_gids is not None and not is_admin:
                 if not is_gid_empty(self.gid) and not check_gid_allowed(self.gid, allowed_gids):
                     print(f"[{self.tool_name.upper()}] [GID_GUARD] 越权拦截：gid={self.gid}，白名单：{normalize_allowed_gids(allowed_gids)}")
-                    return build_denied_result(self.gid, allowed_gids)
+                    return build_denied_result(
+                        self.gid,
+                        allowed_gids,
+                        is_chinese=self._is_chinese(self.user_problem),
+                    )
 
         # 打印调试信息
         self._print_debug_info()
@@ -610,7 +614,12 @@ class ToolExecutor:
                 
                 if err_msg:
                     specific = self.gid if not is_gid_empty(self.gid) else None
-                    result = build_index_invalid_result(specific, normalize_allowed_gids(allowed_gids), pattern=actual_pattern)
+                    result = build_index_invalid_result(
+                        specific,
+                        normalize_allowed_gids(allowed_gids),
+                        pattern=actual_pattern,
+                        is_chinese=self._is_chinese(self.user_problem),
+                    )
                     # 附加步骤信息以便前端展示
                     try:
                         res_obj = json.loads(result)

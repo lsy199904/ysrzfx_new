@@ -59,10 +59,10 @@ class GraphDataRegressionTests(unittest.TestCase):
 
     def test_trace_query_uses_only_persisted_ip_fields(self):
         self.assertNotIn("remip", IP_TRACE_PPL_TEMPLATE)
-        self.assertNotIn("attack_src", IP_TRACE_PPL_TEMPLATE)
+        self.assertIn("eval attack_src", IP_TRACE_PPL_TEMPLATE)
+        self.assertIn("attack_src", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("source.ip", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("destination.ip", IP_TRACE_PPL_TEMPLATE)
-        self.assertIn("@host", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("fortinet.firewall.status", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("rule.id", IP_TRACE_PPL_TEMPLATE)
 
@@ -121,7 +121,6 @@ class GraphDataRegressionTests(unittest.TestCase):
         records = [
             {
                 "@timestamp": "2026-03-26 11:03:21",
-                "@host": "10.180.3.147",
                 "source.ip": "10.180.120.160",
                 "destination.ip": "10.180.3.147",
                 "source.user.name": "li_si",
@@ -135,7 +134,6 @@ class GraphDataRegressionTests(unittest.TestCase):
             },
             {
                 "@timestamp": "2026-03-26 11:03:22",
-                "@host": "10.180.3.147",
                 "source.ip": "10.180.120.160",
                 "destination.ip": "10.180.3.147",
                 "source.user.name": "support",
@@ -152,6 +150,87 @@ class GraphDataRegressionTests(unittest.TestCase):
         self.assertIn("8.0", {node["id"] for node in graph["nodes"]})
         relations = {edge["relation"] for edge in graph["edges"]}
         self.assertTrue({"uses_account", "performs_action", "has_subtype"} <= relations)
+
+    def test_graph_matches_legacy_two_lane_layout_and_preserves_status(self):
+        records = [
+            {
+                "@timestamp": "2026-03-26 11:03:21",
+                "attack_src": "10.180.120.160",
+                "source.ip": "10.180.120.160",
+                "destination.ip": "10.180.3.147",
+                "source.user.name": "li_si",
+                "observer.name": "GuZ_OFFICE_500E",
+                "event.action": "delete",
+                "fortinet.firewall.subtype": "config",
+                "fortinet.firewall.status": "success",
+                "message": "Local user li_si has been deleted",
+                "rule.id": "8.0",
+                "rule.name": "Policy 8.0",
+            },
+            {
+                "@timestamp": "2026-03-26 11:03:21",
+                "attack_src": "10.180.120.160",
+                "source.ip": "10.180.120.160",
+                "destination.ip": "10.180.3.147",
+                "source.user.name": "support",
+                "observer.name": "GuZ_OFFICE_500E",
+                "event.action": "login",
+                "fortinet.firewall.subtype": "system",
+                "fortinet.firewall.status": "failed",
+                "message": "Login failed for user support",
+                "rule.id": "8.0",
+                "rule.name": "Policy 8.0",
+            },
+            {
+                "@timestamp": "2026-03-26 11:03:22",
+                "attack_src": "10.180.120.160",
+                "source.ip": "10.180.120.160",
+                "destination.ip": "10.180.3.147",
+                "observer.name": "GuZ_OFFICE_500E",
+                "event.action": "log_only",
+                "fortinet.firewall.subtype": "ips",
+                "fortinet.firewall.status": "blocked",
+                "message": "IPS attack blocked",
+                "rule.id": "8.0",
+                "rule.name": "Policy 8.0",
+            },
+        ]
+
+        graph = build_graph_data({"data": records})
+        nodes = {node["id"]: node for node in graph["nodes"]}
+        edges = {
+            (edge["source"], edge["target"], edge["relation"]): edge
+            for edge in graph["edges"]
+        }
+
+        self.assertEqual(nodes["user_li_si"]["status"], "success")
+        self.assertEqual(nodes["action_delete"]["status"], "success")
+        self.assertEqual(nodes["subtype_config"]["status"], "success")
+        self.assertEqual(nodes["user_support"]["status"], "failed")
+        self.assertEqual(nodes["action_login"]["status"], "failed")
+        self.assertEqual(nodes["subtype_system"]["status"], "failed")
+        self.assertEqual(nodes["10.180.3.147"]["status"], "blocked")
+        self.assertEqual(nodes["action_log_only"]["status"], "blocked")
+        self.assertEqual(nodes["subtype_ips"]["status"], "blocked")
+        self.assertEqual(nodes["8.0"]["status"], "blocked")
+
+        self.assertIn(("user_li_si", "action_delete", "performs_action"), edges)
+        self.assertIn(("action_delete", "subtype_config", "has_subtype"), edges)
+        self.assertIn(("subtype_config", "device_GuZ_OFFICE_500E", "targets_device"), edges)
+        self.assertIn(("10.180.3.147", "action_log_only", "responds_with"), edges)
+        self.assertIn(("action_log_only", "8.0", "matched_policy"), edges)
+        self.assertEqual(edges[("action_delete", "subtype_config", "has_subtype")]["edge_status"], "success")
+        self.assertEqual(edges[("10.180.3.147", "action_log_only", "responds_with")]["edge_status"], "blocked")
+        self.assertEqual(edges[("action_log_only", "8.0", "matched_policy")]["edge_status"], "blocked")
+
+        self.assertFalse(
+            any(edge["relation"] == "operates_on" for edge in graph["edges"]),
+        )
+        self.assertEqual(
+            len(graph["edges"]),
+            len(edges),
+            "edges should not contain duplicate source/target/relation entries",
+        )
 
 
 if __name__ == "__main__":

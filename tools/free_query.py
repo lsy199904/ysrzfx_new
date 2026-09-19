@@ -465,7 +465,11 @@ def free_query_request(
     if (allowed_gids is not None and not is_admin
             and not is_gid_empty(gid) and not check_gid_allowed(gid, allowed_gids)):
         print(f"[FREE_QUERY] [GID_GUARD] 越权拦截：gid={gid}，白名单：{allowed_gids}")
-        return build_denied_result(gid, allowed_gids)
+        return build_denied_result(
+            gid,
+            allowed_gids,
+            is_chinese=any('\u4e00' <= char <= '\u9fff' for char in user_problem),
+        )
 
     # 【缓存检查】使用统一的 ToolCacheManager（login_account 加入 key，防止不同账号互相命中缓存）
     import hashlib
@@ -556,7 +560,11 @@ def free_query_request(
                         if "索引不存在" in denied_msg:
                             # 索引不存在 -> 返回 early-stop 结果
                             print(f"[FREE_QUERY] [GID_GUARD] 索引探测拦截：{denied_msg}")
-                            denied_result = build_index_invalid_result(None, allowed_gids)
+                            denied_result = build_index_invalid_result(
+                                None,
+                                allowed_gids,
+                                is_chinese=any('\u4e00' <= char <= '\u9fff' for char in user_problem),
+                            )
                             return denied_result
                         else:
                             # 越权：返回固定模板提示 + suggestion（agent_chat 直推 final_answer）

@@ -580,7 +580,7 @@ async def chat_agent_stream(request: Request):
         llm_chain = LLMChain(llm=model, prompt=prompt_template_agent)
 
         # 7. 实例化输出解析器（无状态，可复用，但为一致性仍独立创建）
-        output_parser = CustomOutputParser()
+        output_parser = CustomOutputParser(is_chinese=is_chinese_input)
 
         # 8. 初始化Agent：使用当前请求的独立工具名列表
         agent = LLMSingleActionAgent(
@@ -941,7 +941,9 @@ async def chat_agent_stream(request: Request):
                     except json.JSONDecodeError as e:
                         app_logger.info(f"JSON 解析失败：{e}")
                         app_logger.info(f"=== end ===\n")
-                        tools_use = [f"\n工具执行完成 (解析失败): {output_str[:200]}..."]
+                        tools_use = [
+                            f"\n{str_lang['tool_executed']} ({str_lang['parse_failed']}): {output_str[:200]}..."
+                        ]
                         yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
             
             elif status in (Status.start, Status.running):
@@ -978,13 +980,21 @@ async def chat_agent_stream(request: Request):
 
                 # 兜底：如果 final_answer 为空但 steps 有错误信息（如索引不存在）
                 if not final_answer and index_check_steps:
-                    error_msg = "查询失败，未找到相关日志索引"
+                    error_msg = (
+                        "查询失败，未找到相关日志索引"
+                        if is_chinese_input
+                        else "Query failed: no matching log index was found"
+                    )
                     for step in index_check_steps:
                         if "不存在" in step.get("detail", "") or step.get("title") == "索引存在性探测":
                             error_msg = step.get("detail", error_msg)
                             break
                     if "不存在" not in error_msg:
-                        error_msg = str_lang.get('index_not_found', '该索引不存在，已为您关闭日志查询功能')
+                        error_msg = (
+                            "该索引不存在，已为您关闭日志查询功能"
+                            if is_chinese_input
+                            else "The index does not exist, so the log query was closed."
+                        )
                     final_answer = error_msg
                     app_logger.info(f"[agent_finish] 从步骤信息构造 final_answer: {final_answer}")
 

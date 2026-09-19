@@ -199,7 +199,7 @@ def build_denied_message(gid, allowed_gids, l2: bool = False) -> str:
     )
 
 
-def build_denied_result(gid, allowed_gids, l2: bool = False) -> str:
+def build_denied_result(gid, allowed_gids, l2: bool = False, is_chinese: bool = True) -> str:
     """
     构建越权时的工具返回值（JSON 字符串）。
 
@@ -207,12 +207,30 @@ def build_denied_result(gid, allowed_gids, l2: bool = False) -> str:
     会将两者拼接输出，因此建议将 suggestion 置为空避免重复。
     """
     import json
-    msg = build_denied_message(gid, allowed_gids, l2=l2)
+    if is_chinese:
+        msg = build_denied_message(gid, allowed_gids, l2=l2)
+        title = "权限校验"
+        detail = f"查询涉及无权访问的用户组：{gid}，已终止查询"
+    else:
+        gid_text = "、".join(str(g) for g in gid) if isinstance(gid, (list, tuple)) else str(gid)
+        allowed_text = ", ".join(normalize_allowed_gids(allowed_gids))
+        if l2:
+            msg = (
+                f"This query involves unauthorized user group(s) ({gid_text}) and was stopped. "
+                f"Allowed user groups: {allowed_text}. Please specify an allowed group and try again."
+            )
+        else:
+            msg = (
+                f"Sorry, you do not have permission to query user group {gid_text}. "
+                f"Allowed user groups: {allowed_text}. Please contact the system administrator for access."
+            )
+        title = "Permission Check"
+        detail = f"The query involved unauthorized user group(s): {gid_text}; it was stopped."
     return json.dumps({
         "steps": [{
             "step": 1,
-            "title": "权限校验",
-            "detail": f"查询涉及无权访问的用户组：{gid}，已终止查询"
+            "title": title,
+            "detail": detail
         }],
         "http_status": 403,
         "error": "",  # 不重复，final_answer 由 suggestion 触发
@@ -225,7 +243,7 @@ def build_denied_result(gid, allowed_gids, l2: bool = False) -> str:
 # ============================================
 # PPL gid 条件提取 / 注入 / 索引收窄
 # ============================================
-def build_index_invalid_result(specific_gid, allowed_gids, pattern: str = None) -> str:
+def build_index_invalid_result(specific_gid, allowed_gids, pattern: str = None, is_chinese: bool = True) -> str:
     """
     构建「索引不存在」时的工具返回值（JSON 字符串）。
 
@@ -242,20 +260,33 @@ def build_index_invalid_result(specific_gid, allowed_gids, pattern: str = None) 
     """
     import json
     if specific_gid:
-        detail = f"用户组 {specific_gid} 的日志索引不存在"
-        if pattern:
-            detail += f"，实际探测索引模式：{pattern}"
-        msg = f"{detail}，无法查询。"
+        if is_chinese:
+            detail = f"用户组 {specific_gid} 的日志索引不存在"
+            if pattern:
+                detail += f"，实际探测索引模式：{pattern}"
+            msg = f"{detail}，无法查询。"
+        else:
+            detail = f"The log index for user group {specific_gid} does not exist"
+            if pattern:
+                detail += f". Probed index pattern: {pattern}"
+            msg = f"{detail}, so the query cannot be completed."
     else:
-        detail = f"您有权查询的用户组（{allowed_gids}）的日志索引均不存在"
-        if pattern:
-            detail += f"，实际探测索引模式：{pattern}"
-        msg = f"{detail}，无法查询。"
+        if is_chinese:
+            detail = f"您有权查询的用户组（{allowed_gids}）的日志索引均不存在"
+            if pattern:
+                detail += f"，实际探测索引模式：{pattern}"
+            msg = f"{detail}，无法查询。"
+        else:
+            allowed_text = ", ".join(normalize_allowed_gids(allowed_gids))
+            detail = f"None of the log indexes for your allowed user groups ({allowed_text}) exist"
+            if pattern:
+                detail += f". Probed index pattern: {pattern}"
+            msg = f"{detail}, so the query cannot be completed."
     return json.dumps({
         "__agent_stop__": True,
         "steps": [{
             "step": 1,
-            "title": "索引探测",
+            "title": "索引探测" if is_chinese else "Index Check",
             "detail": detail
         }],
         "http_status": 404,
