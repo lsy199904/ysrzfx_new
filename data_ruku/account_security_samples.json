@@ -11643,6 +11643,94 @@
     "fortinet": {
       "firewall": {
         "subtype": "config",
+        "srccountry": "China",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si",
+        "ui": "Admin Console (10.180.120.160)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.180.120.160"
+    },
+    "@timestamp": "2026-03-26T10:35:12+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "Local user li_si has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "srccountry": "China",
+        "ui": "Admin Console (10.180.120.160)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "support"
+      },
+      "ip": "10.180.120.160"
+    },
+    "@timestamp": "2026-03-26T10:36:45+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "Login"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "User support logged in from 10.180.120.160",
+    "rule": {
+      "description": "User login event"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "srccountry": "China",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin",
+        "ui": "Admin Console (10.180.110.150)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.180.110.150"
+    },
+    "@timestamp": "2026-03-26T10:37:22+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19936"
+    },
+    "message": "Local user admin has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
         "srccountry": "Japan",
         "cfgpath": "user.local",
         "cfgobj": "user_local_chen_liu",
@@ -11672,6 +11760,39 @@
   {
     "fortinet": {
       "firewall": {
+        "subtype": "log_only",
+        "srccountry": "China",
+        "attack": "Policy Match",
+        "status": "pass"
+      }
+    },
+    "source": {
+      "ip": "10.180.120.160"
+    },
+    "destination": {
+      "ip": "10.180.3.147",
+      "port": 443
+    },
+    "@timestamp": "2026-03-26T10:38:56+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "traffic",
+      "reason": "Policy 8.0 matched"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "Traffic allowed by Policy 8.0: 10.180.120.160 -> 10.180.3.147:443",
+    "rule": {
+      "id": 8,
+      "name": "Policy 8.0",
+      "description": "Default internal traffic policy"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
         "subtype": "config",
         "srccountry": "US",
         "cfgpath": "user.local",
@@ -11695,6 +11816,66 @@
       "serial_number": "FGT19936"
     },
     "message": "Local user wang_xin has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "srccountry": "China",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin",
+        "ui": "Admin Console (10.180.80.120)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.180.80.120"
+    },
+    "@timestamp": "2026-03-26T10:40:30+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "Local user admin has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "srccountry": "China",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si",
+        "ui": "Admin Console (10.180.120.160)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.180.120.160"
+    },
+    "@timestamp": "2026-03-26T10:42:08+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "Local user li_si has been deleted",
     "rule": {
       "description": "User account removed"
     }
@@ -11733,6 +11914,64 @@
     "fortinet": {
       "firewall": {
         "subtype": "config",
+        "srccountry": "China",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_test",
+        "ui": "Admin Console (10.180.110.150)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "test_user"
+      },
+      "ip": "10.180.110.150"
+    },
+    "@timestamp": "2026-03-26T10:43:18+00:00",
+    "@gid": "15768",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500F",
+      "serial_number": "FGT15768"
+    },
+    "message": "Local user test_user has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "srccountry": "China",
+        "ui": "Admin Console (10.180.120.160)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "support"
+      },
+      "ip": "10.180.120.160"
+    },
+    "@timestamp": "2026-03-26T10:45:22+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "Login"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "User support logged in from 10.180.120.160",
+    "rule": {
+      "description": "User login event"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
         "srccountry": "Germany",
         "cfgpath": "user.local",
         "cfgobj": "user_local_test",
@@ -11762,6 +12001,39 @@
   {
     "fortinet": {
       "firewall": {
+        "subtype": "log_only",
+        "srccountry": "China",
+        "attack": "Policy Match",
+        "status": "pass"
+      }
+    },
+    "source": {
+      "ip": "10.180.120.160"
+    },
+    "destination": {
+      "ip": "10.180.3.147",
+      "port": 8080
+    },
+    "@timestamp": "2026-03-26T10:48:33+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "traffic",
+      "reason": "Policy 8.0 matched"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "Traffic allowed by Policy 8.0: 10.180.120.160 -> 10.180.3.147:8080",
+    "rule": {
+      "id": 8,
+      "name": "Policy 8.0",
+      "description": "Default internal traffic policy"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
         "subtype": "config",
         "srccountry": "China",
         "cfgpath": "user.local",
@@ -11785,6 +12057,36 @@
       "serial_number": "FGT19936"
     },
     "message": "Local user chen_jun has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "srccountry": "China",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin",
+        "ui": "Admin Console (10.180.110.150)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.180.110.150"
+    },
+    "@timestamp": "2026-03-26T10:50:15+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19936"
+    },
+    "message": "Local user admin has been added",
     "rule": {
       "description": "Local user added"
     }
@@ -11825,6 +12127,36 @@
         "subtype": "config",
         "srccountry": "China",
         "cfgpath": "user.local",
+        "cfgobj": "user_local_temp",
+        "ui": "Admin Console (10.180.80.120)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "temp_user"
+      },
+      "ip": "10.180.80.120"
+    },
+    "@timestamp": "2026-03-26T10:52:35+00:00",
+    "@gid": "15768",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500F",
+      "serial_number": "FGT15768"
+    },
+    "message": "Local user temp_user has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "srccountry": "China",
+        "cfgpath": "user.local",
         "cfgobj": "user_local_li_si",
         "ui": "Admin Console (10.184.88.56)"
       }
@@ -11845,6 +12177,66 @@
       "serial_number": "FGT15768"
     },
     "message": "Local user zhou_hui has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "srccountry": "China",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si",
+        "ui": "Admin Console (10.180.120.160)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.180.120.160"
+    },
+    "@timestamp": "2026-03-26T10:55:33+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "Local user li_si has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "srccountry": "China",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin",
+        "ui": "Admin Console (10.180.80.120)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.180.80.120"
+    },
+    "@timestamp": "2026-03-26T10:55:45+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "Local user admin has been added",
     "rule": {
       "description": "Local user added"
     }
@@ -11882,6 +12274,34 @@
   {
     "fortinet": {
       "firewall": {
+        "subtype": "system",
+        "srccountry": "China",
+        "ui": "Admin Console (10.180.120.160)"
+      }
+    },
+    "source": {
+      "user": {
+        "name": "support"
+      },
+      "ip": "10.180.120.160"
+    },
+    "@timestamp": "2026-03-26T10:58:17+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "Login"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "User support logged in from 10.180.120.160",
+    "rule": {
+      "description": "User login event"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
         "subtype": "config",
         "srccountry": "US",
         "cfgpath": "user.local",
@@ -11907,6 +12327,39 @@
     "message": "Local user zhang_san has been added",
     "rule": {
       "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "log_only",
+        "srccountry": "China",
+        "attack": "Policy Match",
+        "status": "pass"
+      }
+    },
+    "source": {
+      "ip": "10.180.120.160"
+    },
+    "destination": {
+      "ip": "10.180.3.147",
+      "port": 22
+    },
+    "@timestamp": "2026-03-26T11:01:05+00:00",
+    "@gid": "19936",
+    "event": {
+      "action": "traffic",
+      "reason": "Policy 8.0 matched"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19936"
+    },
+    "message": "Traffic allowed by Policy 8.0: 10.180.120.160 -> 10.180.3.147:22",
+    "rule": {
+      "id": 8,
+      "name": "Policy 8.0",
+      "description": "Default internal traffic policy"
     }
   },
   {

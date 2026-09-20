@@ -867,7 +867,7 @@ def query_es(ppl_query: str, user: str = None, password: str = None, debug_info:
             df = pd.DataFrame(datarows, columns=columns)
             records = df.to_dict('records')
             
-            # 将 UTC 时间记录转换为东八区时间，方便 LLM 理解
+            # 【恢复】统一在此处将 UTC 记录转换为东八区时间，确保下游工具（如溯源）能正确使用 CST 时间
             records = _convert_records_to_utc8(records)
             
             print(f"[ES_QUERY] 查询成功，返回 {len(records)} 条记录")
