@@ -53,9 +53,9 @@ class CustomOutputParser(AgentOutputParser):
     3. 其他情况 → AgentFinish（LLM 总结或兜底）
     """
 
-    def __init__(self, is_chinese: bool = True):
-        super().__init__()
-        self.is_chinese = is_chinese
+    # AgentOutputParser 是 Pydantic 模型。必须声明为模型字段，不能在
+    # __init__ 中直接赋值，否则生产环境会因未声明字段中断 SSE 响应。
+    is_chinese: bool = True
 
     def parse(self, llm_output: str) -> AgentFinish | tuple[dict[str, str], str] | AgentAction:
         """
