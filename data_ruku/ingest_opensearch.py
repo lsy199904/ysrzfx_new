@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import hashlib
 import json
 import os
@@ -51,6 +52,7 @@ INDEX_MAPPING = {
             "destination": {
                 "properties": {
                     "ip": {"type": "ip"},
+                    "port": {"type": "long"},
                 }
             },
             "event": {
@@ -73,6 +75,13 @@ INDEX_MAPPING = {
             "observer": {
                 "properties": {
                     "name": {"type": "keyword"},
+                }
+            },
+            "rule": {
+                "properties": {
+                    "id": {"type": "keyword"},
+                    "name": {"type": "keyword"},
+                    "description": {"type": "keyword"},
                 }
             },
         },
@@ -122,8 +131,10 @@ def create_client() -> OpenSearch:
         port = os.getenv("ES_PORT", "9200")
         url = f"{scheme}://{host}:{port}"
 
-    username = os.getenv("OPENSEARCH_USERNAME") or os.getenv("ES_USER")
-    password = os.getenv("OPENSEARCH_PASSWORD") or os.getenv("ES_PASSWORD")
+    # Do not reuse credentials from the application .env. The importer is a
+    # manual maintenance tool and must use the operator-supplied account.
+    username = input("OpenSearch username: ").strip()
+    password = getpass.getpass("OpenSearch password: ")
 
     verify_value = os.getenv("OPENSEARCH_VERIFY_CERTS")
     if verify_value is None:
@@ -133,9 +144,7 @@ def create_client() -> OpenSearch:
     verify_certs = verify_value.lower() in {"1", "true", "yes"}
 
     if not username or not password:
-        raise RuntimeError(
-            "Set OPENSEARCH_USERNAME and OPENSEARCH_PASSWORD before running."
-        )
+        raise RuntimeError("OpenSearch username and password are required.")
 
     parsed_url = urlparse(url)
     if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:

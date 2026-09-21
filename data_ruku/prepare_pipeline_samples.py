@@ -65,6 +65,12 @@ def raw_header(document: dict[str, Any]) -> list[str]:
 def build_account_message(document: dict[str, Any]) -> str:
     firewall = get_field(document, "fortinet", "firewall", default={})
     event_action = get_field(document, "event", "action", default="event")
+    # FortiGate routes traffic records through a dedicated sub-pipeline. Keep
+    # the raw type aligned with that routing rule instead of labeling traffic
+    # as a generic event.
+    log_type = get_field(firewall, "type")
+    if not log_type:
+        log_type = "traffic" if str(event_action).lower() == "traffic" else "event"
     source_ip = get_field(document, "source", "ip")
     username = get_field(document, "source", "user", "name")
     observer = get_field(document, "observer", "name", default="FortiGate")
@@ -73,7 +79,7 @@ def build_account_message(document: dict[str, Any]) -> str:
         kv("time", str(document.get("@timestamp", ""))[11:19]),
         kv("devname", observer),
         kv("devid", get_field(document, "observer", "serial_number")),
-        kv("type", "event"),
+        kv("type", log_type),
         kv("subtype", get_field(firewall, "subtype", default="config")),
         kv("action", event_action),
         kv("reason", get_field(document, "event", "reason")),

@@ -31,26 +31,27 @@ python3 data_ruku/prepare_pipeline_samples.py
 
 ## 配置连接
 
-入库脚本支持项目 `.env` 使用的 `ES_*` 变量，也支持独立的
-`OPENSEARCH_*` 变量。推荐在 Shell 中读取密码，避免特殊字符被解释：
+入库脚本不会读取项目 `.env` 中的 OpenSearch 用户名和密码，也不会复用应用的管理员凭据。
+每次执行时都会交互式提示输入入库账号和密码。连接地址和 SSL 配置仍从环境变量读取：
 
 ```bash
 export ES_SCHEME=https
 export ES_HOST=192.168.100.45
 export ES_PORT=9200
-export ES_USER='your_user'
-read -rsp 'OpenSearch password: ' ES_PASSWORD
-echo
 export ES_VERIFY_SSL=false
 ```
 
-也可以使用：
+执行导入命令后输入本次使用的账号和密码：
+
+```bash
+OpenSearch username: your_ingest_user
+OpenSearch password: ********
+```
+
+也可以只设置连接地址：
 
 ```bash
 export OPENSEARCH_URL='https://192.168.100.45:9200'
-export OPENSEARCH_USERNAME='your_user'
-read -rsp 'OpenSearch password: ' OPENSEARCH_PASSWORD
-echo
 export OPENSEARCH_VERIFY_CERTS=false
 ```
 

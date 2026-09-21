@@ -63,6 +63,7 @@ class PipelineSampleTests(unittest.TestCase):
         raw = load_raw("account_security_samples.json")
         traffic = next(item for item in raw if item.get("event", {}).get("action") == "traffic")
         fields = parse_kv_message(prepare_document(traffic, "account_security")["message"])
+        self.assertEqual(fields["type"], "traffic")
         self.assertEqual(fields["dstip"], traffic["destination"]["ip"])
         self.assertEqual(fields["dstport"], str(traffic["destination"]["port"]))
         self.assertEqual(fields["policyid"], str(traffic["rule"]["id"]))
