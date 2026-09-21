@@ -22,7 +22,7 @@ import logging
 from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
-from tools.tool_base import ToolExecutor, CompressionConfig
+from tools.tool_base import ToolExecutor, CompressionConfig, calculate_ip_stats
 from tools.index_config import INDEX_SOURCE_PATTERN
 from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
 from tools.ip_trace import ip_trace_request, build_trace_window
@@ -227,6 +227,13 @@ def system_security_request(
         trace_info = {"status": "error", "message": f"自动溯源执行失败：{str(e)}", "ip_details": []}
     
     raw_result["trace_info"] = trace_info
+    
+    # 附加 IP 统计信息（预计算每个 IP 的出现次数和占比，供 LLM 直接读取）
+    raw_result["ip_stats"] = calculate_ip_stats(
+        raw_result.get("data", []),
+        ip_field="uiscrip"
+    )
+    
     return json.dumps(raw_result, ensure_ascii=False)
 
 

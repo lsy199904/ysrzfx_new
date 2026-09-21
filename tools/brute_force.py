@@ -24,7 +24,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
-from tools.tool_base import ToolExecutor, CompressionConfig
+from tools.tool_base import ToolExecutor, CompressionConfig, calculate_ip_stats
 from tools.index_config import INDEX_SOURCE_PATTERN
 from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
 from tools.ip_trace import ip_trace_request, build_trace_window
@@ -53,6 +53,8 @@ logger = logging.getLogger(__name__)
 
 
 # PPL 查询模板
+# 【ECS 适配】使用标准 ECS 字段，不再依赖不存在的 fortinet.firewall.subtype 和 fortinet.firewall.status
+# PPL 查询模板
 PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
 
 | where (fortinet.firewall.subtype='system' and event.action='login' and fortinet.firewall.status='failed') OR (fortinet.firewall.subtype='vpn' and message='SSL user failed to logged in')
@@ -61,7 +63,6 @@ PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
 | eval attack_src = if(isnotnull(source.ip), cast(source.ip AS STRING), cast(destination.ip AS STRING))
 | fields @timestamp, source.user.name, attack_src, source.ip, destination.ip, event.action, event.reason, message, fortinet.firewall.subtype, @gid, observer.name, rule.id
 | sort - @timestamp"""
-
 
 # 压缩配置（与其他工具统一）
 COMPRESSION_CONFIG = CompressionConfig(
@@ -326,6 +327,12 @@ def brute_force_request(
     
     # 将溯源信息追加到结果中
     raw_result["trace_info"] = trace_info
+    
+    # 附加 IP 统计信息（预计算每个 IP 的出现次数和占比，供 LLM 直接读取）
+    raw_result["ip_stats"] = calculate_ip_stats(
+        raw_result.get("data", []),
+        ip_field="attack_src"
+    )
     
     # 返回最终结果
     return json.dumps(raw_result, ensure_ascii=False)

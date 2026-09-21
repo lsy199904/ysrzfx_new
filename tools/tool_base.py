@@ -718,6 +718,67 @@ class ToolExecutor:
 
 
 # ============================================
+# IP 统计计算工具函数
+# ============================================
+def calculate_ip_stats(data: list, ip_field: str) -> list:
+    """
+    统计数据中每个 IP 的出现次数和占比（用于生成 LLM 可读的 IP 统计摘要）
+    
+    Args:
+        data: 查询返回的数据列表
+        ip_field: IP 字段名（支持点号分隔的嵌套字段，如 'source.ip' 或 'attack_src'）
+    
+    Returns:
+        list: 按次数降序排列的列表，每个元素为
+              {"ip": str, "count": int, "percentage": float}
+              其中 percentage 为百分比数值（如 33.33 表示 33.33%）
+    """
+    if not data:
+        return []
+    
+    # 统计每个 IP 的出现次数
+    ip_counts = {}
+    for record in data:
+        # 支持嵌套字段（如 'source.ip'）
+        ip = _safe_get_field(record, ip_field)
+        if ip:
+            ip_counts[ip] = ip_counts.get(ip, 0) + 1
+    
+    if not ip_counts:
+        return []
+    
+    total = sum(ip_counts.values())
+    # 按次数降序排序
+    sorted_ips = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)
+    
+    # 计算每个 IP 的占比
+    ip_stats = []
+    for ip, count in sorted_ips:
+        percentage = round((count / total) * 100, 1) if total > 0 else 0.0
+        ip_stats.append({
+            "ip": ip,
+            "count": count,
+            "percentage": percentage
+        })
+    
+    return ip_stats
+
+
+def _safe_get_field(record: dict, field_path: str) -> Optional[str]:
+    """安全获取嵌套字段值，如 'source.ip'"""
+    if not field_path or not record:
+        return None
+    keys = field_path.split(".")
+    value = record
+    for key in keys:
+        if isinstance(value, dict):
+            value = value.get(key)
+        else:
+            return None
+    return str(value) if value else None
+
+
+# ============================================
 # 便捷函数
 # ============================================
 def create_tool_request(
