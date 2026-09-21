@@ -25,6 +25,10 @@ data_ruku/
 python3 data_ruku/prepare_pipeline_samples.py
 ```
 
+生成的 FortiGate Syslog 头部第二列是源/主机 IP，Pipeline 会据此生成
+`@host`；设备名称仍通过 `devname` 解析到 `observer.name`，不会用设备名覆盖
+`@host`。
+
 ## 配置连接
 
 入库脚本支持项目 `.env` 使用的 `ES_*` 变量，也支持独立的

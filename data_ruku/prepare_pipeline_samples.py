@@ -52,7 +52,13 @@ def kv(name: str, value: Any) -> str:
 
 def raw_header(document: dict[str, Any]) -> list[str]:
     timestamp = str(document.get("@timestamp", ""))
-    host = get_field(document, "observer", "name", default="FortiGate")
+    # The syslog header host is normalized into @host by the ingest pipeline.
+    # Keep it as an IP; the device name belongs to observer.name/devname.
+    host = (
+        get_field(document, "source", "ip")
+        or get_field(document, "destination", "ip")
+        or "FortiGate"
+    )
     return [timestamp, str(host)]
 
 
@@ -84,9 +90,15 @@ def build_account_message(document: dict[str, Any]) -> str:
 
 
 def build_brute_force_document(document: dict[str, Any]) -> dict[str, Any]:
-    # This scenario already contains a valid FortiGate KV message. Keep the
-    # source user/IP because the login sub-pipeline expects those ECS fields.
+    # This scenario already contains a valid FortiGate KV message. Rewrite
+    # only the syslog host column so @host is the source IP, while preserving
+    # the login KV fields expected by the pipeline.
     message = document.get("message") or document.get("syslog5424_msg")
+    if message:
+        parts = str(message).split(maxsplit=2)
+        if len(parts) == 3:
+            timestamp, host = raw_header(document)
+            message = f"{timestamp} {host} {parts[2]}"
     result: dict[str, Any] = {
         "@timestamp": document.get("@timestamp"),
         "@gid": str(document.get("@gid", "")),

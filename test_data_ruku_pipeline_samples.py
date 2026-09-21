@@ -73,6 +73,19 @@ class PipelineSampleTests(unittest.TestCase):
                 self.assertTrue(fields["srcip"])
                 self.assertTrue(fields["msg"])
 
+    def test_syslog_host_uses_ip_not_device_name(self):
+        for name, scenario in [
+            ("account_security_samples.json", "account_security"),
+            ("brute_force_samples.json", "brute_force"),
+            ("network_attack_samples.json", "network_attack"),
+            ("system_security_samples.json", "system_security"),
+        ]:
+            raw = load_raw(name)
+            prepared = prepare_document(raw[0], scenario)
+            header = prepared["message"].split(maxsplit=2)
+            expected_host = raw[0]["source"]["ip"] or raw[0]["destination"]["ip"]
+            self.assertEqual(header[1], expected_host)
+
 
 if __name__ == "__main__":
     unittest.main()
