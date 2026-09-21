@@ -89,7 +89,7 @@ search source=`log_g19936_fortinet_fortigate`
 search source=`log_g19936_fortinet_fortigate`
 | where @gid = '19936' and event.action = 'login'
 | fields @timestamp, source.user.name, event.action, event.reason,
-         fortinet.firewall.subtype, fortinet.firewall.status, observer.name
+         fortinet.firewall.subtype, status, observer.name
 | head 20
 ```
 

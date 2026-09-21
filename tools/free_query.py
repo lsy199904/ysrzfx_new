@@ -190,7 +190,7 @@ def generate_ppl_by_llm(
 - 索引名称固定，不包含日期；所有日期范围必须通过 `@timestamp` 条件过滤
 
 【常见日志类型和字段】
-- 登录日志：fortinet.firewall.subtype='system', event.action='login', fortinet.firewall.status='failed', event.reason, source.ip, remip, source.user.name（仅登录/VPN日志有remip）
+- 登录日志：fortinet.firewall.subtype='system', event.action='login', status='failed', event.reason, source.ip, remip, source.user.name（仅登录/VPN日志有remip）
 - VPN日志：fortinet.firewall.subtype='vpn', message='SSL user failed to logged in', source.ip, remip, source.user.name
 - 账户操作：event.action='Add'/'Delete'/'password reset', fortinet.firewall.cfgpath='user.local', source.user.name
 - IPS 告警：fortinet.firewall.type='utm', fortinet.firewall.subtype='ips', log.level='alert', fortinet.firewall.attack, source.ip, destination.ip, destination.port, event.action, url.original（IPS日志没有remip字段！）
