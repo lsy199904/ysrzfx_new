@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bulk-load FortiGate brute-force samples into OpenSearch."""
+"""Bulk-load Pipeline-shaped FortiGate samples into OpenSearch."""
 
 from __future__ import annotations
 
@@ -15,7 +15,17 @@ from opensearchpy import OpenSearch, helpers
 
 
 DEFAULT_INDEX = "log_g19936_fortinet_fortigate"
-DEFAULT_DATA_FILE = "brute_force_samples.json"
+DATA_DIR = Path(__file__).resolve().parent
+DEFAULT_DATA_FILE = str(DATA_DIR / "brute_force_samples.json")
+DEFAULT_SAMPLE_FILES = tuple(
+    DATA_DIR / filename
+    for filename in (
+        "account_security_samples.json",
+        "brute_force_samples.json",
+        "network_attack_samples.json",
+        "system_security_samples.json",
+    )
+)
 
 INDEX_MAPPING = {
     "settings": {
@@ -105,14 +115,22 @@ def bulk_actions(
 
 
 def create_client() -> OpenSearch:
-    url = os.getenv("OPENSEARCH_URL", "https://localhost:9200")
-    username = os.getenv("OPENSEARCH_USERNAME")
-    password = os.getenv("OPENSEARCH_PASSWORD")
-    verify_certs = os.getenv("OPENSEARCH_VERIFY_CERTS", "true").lower() in {
-        "1",
-        "true",
-        "yes",
-    }
+    url = os.getenv("OPENSEARCH_URL")
+    if not url:
+        scheme = os.getenv("ES_SCHEME", "https")
+        host = os.getenv("ES_HOST", "localhost")
+        port = os.getenv("ES_PORT", "9200")
+        url = f"{scheme}://{host}:{port}"
+
+    username = os.getenv("OPENSEARCH_USERNAME") or os.getenv("ES_USER")
+    password = os.getenv("OPENSEARCH_PASSWORD") or os.getenv("ES_PASSWORD")
+
+    verify_value = os.getenv("OPENSEARCH_VERIFY_CERTS")
+    if verify_value is None:
+        # The application .env uses ES_VERIFY_SSL, while this importer used
+        # OPENSEARCH_VERIFY_CERTS. Support both names consistently.
+        verify_value = os.getenv("ES_VERIFY_SSL", "true")
+    verify_certs = verify_value.lower() in {"1", "true", "yes"}
 
     if not username or not password:
         raise RuntimeError(
@@ -177,6 +195,12 @@ def parse_args() -> argparse.Namespace:
         help="Number of documents per bulk request (default: 100)",
     )
     parser.add_argument(
+        "--all",
+        dest="import_all",
+        action="store_true",
+        help="Import all four prepared scenario files from the current directory.",
+    )
+    parser.add_argument(
         "--recreate",
         action="store_true",
         help="Delete and recreate the target index before importing.",
@@ -186,47 +210,61 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    data_file = Path(args.data_file).expanduser()
-
-    if not data_file.is_file():
-        raise FileNotFoundError(f"Input file does not exist: {data_file}")
     if args.chunk_size < 1:
         raise ValueError("--chunk-size must be at least 1")
 
-    documents = load_documents(data_file)
+    data_files = (
+        list(DEFAULT_SAMPLE_FILES)
+        if args.import_all
+        else [Path(args.data_file).expanduser()]
+    )
+    for data_file in data_files:
+        if not data_file.is_file():
+            raise FileNotFoundError(f"Input file does not exist: {data_file}")
+
     client = create_client()
     client.info()
 
-    # Skip manual index creation — DataStream auto-creates on first write,
-    # and an existing index template (log_fortinet_fortigate) manages this name.
-    try:
-        ensure_index(client, args.index, args.recreate)
-    except Exception as e:
-        err_str = str(e).lower()
-        if "data stream" in err_str or "index template" in err_str:
-            # This name is managed by an index template → auto-creates DataStream
-            print(f"Detected managed index/stream, skipping manual creation: {e}")
-        else:
-            raise
+    for position, data_file in enumerate(data_files):
+        documents = load_documents(data_file)
 
-    success, failed = helpers.bulk(
-        client,
-        bulk_actions(documents, args.index),
-        chunk_size=args.chunk_size,
-        raise_on_error=False,
-        raise_on_exception=True,
-    )
+        # Skip manual index creation — DataStream auto-creates on first write,
+        # and an existing index template (log_fortinet_fortigate) manages this name.
+        try:
+            ensure_index(client, args.index, args.recreate and position == 0)
+        except Exception as e:
+            err_str = str(e).lower()
+            if "data stream" in err_str or "index template" in err_str:
+                print(f"Detected managed index/stream, skipping manual creation: {e}")
+            else:
+                raise
 
-    print(f"OpenSearch: {os.getenv('OPENSEARCH_URL', 'https://localhost:9200')}")
-    print(f"Index: {args.index}")
-    print(f"Input: {data_file}")
-    print(f"Documents read: {len(documents)}")
-    print(f"Documents indexed: {success}")
-    print(f"Documents failed: {len(failed)}")
-    if failed:
-        print(json.dumps(failed[:3], ensure_ascii=False, indent=2))
-        return 1
+        success, failed = helpers.bulk(
+            client,
+            bulk_actions(documents, args.index),
+            chunk_size=args.chunk_size,
+            raise_on_error=False,
+            raise_on_exception=True,
+        )
+
+        print(f"OpenSearch: {url_for_log()}")
+        print(f"Index: {args.index}")
+        print(f"Input: {data_file}")
+        print(f"Documents read: {len(documents)}")
+        print(f"Documents indexed: {success}")
+        print(f"Documents failed: {len(failed)}")
+        if failed:
+            print(json.dumps(failed[:3], ensure_ascii=False, indent=2))
+            return 1
     return 0
+
+
+def url_for_log() -> str:
+    """Return the configured endpoint without printing credentials."""
+    value = os.getenv("OPENSEARCH_URL")
+    if value:
+        return value
+    return f"{os.getenv('ES_SCHEME', 'https')}://{os.getenv('ES_HOST', 'localhost')}:{os.getenv('ES_PORT', '9200')}"
 
 
 if __name__ == "__main__":
