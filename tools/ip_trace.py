@@ -581,6 +581,22 @@ def build_graph_data(raw_data: dict) -> dict:
             return "blocked"
         if raw_status in ("accept", "accepted", "pass", "passed", "allowed"):
             return "success"
+        # 部分 FortiGate 流量日志没有显式 status，但 event.action 本身
+        # 已表达允许/拦截结果，用于补齐节点和边的绘图状态。
+        action = _get_field(record, ["event.action", "action"]).strip().lower()
+        if action in ("accept", "accepted", "pass", "passed", "allowed"):
+            return "success"
+        if action in ("deny", "denied", "block", "blocked", "quarantine"):
+            return "blocked"
+
+        # 某些登录日志只保留 message/event.reason，没有显式 status。
+        # 这时仍要把失败状态同步到 user、action、subtype 以及对应边。
+        msg = _get_field(record, ["message", "msg"]).lower()
+        reason = _get_field(record, ["event.reason", "reason"]).lower()
+        if any(keyword in reason for keyword in ("invalid", "fail", "locked", "timeout", "denied")):
+            return "failed"
+        if any(keyword in msg for keyword in ("login failed", "authentication failed", "access denied")):
+            return "failed"
         return ""
 
     def _set_node_status(node_id: str, status: str) -> None:
@@ -702,20 +718,42 @@ def build_graph_data(raw_data: dict) -> dict:
         })
 
     # ========== 2. 构建边（关系）==========
-    # 核心思路：按拓扑层级构建边，而不是从攻击者放射状连接所有节点
-    # 层级：attacker -> host -> device/user -> action/subtype/policy
+    # 统一按 source + target + relation 去重。重复事件不会丢失状态：
+    # blocked > failed > success > 空。
     edges = []
-    edge_set = set()  # 防止重复边
+    edge_index = {}
 
-    # 按时间排序 records，确保边的顺序符合时间线
+    def _add_edge(source: str, target: str, relation: str, timestamp: str = "", edge_status: str = ""):
+        if not source or not target:
+            return
+        key = (str(source), str(target), relation)
+        existing = edge_index.get(key)
+        if existing is None:
+            edge = {
+                "source": str(source),
+                "target": str(target),
+                "relation": relation,
+                "timestamp": timestamp,
+                "edge_status": edge_status or "",
+            }
+            edge_index[key] = edge
+            edges.append(edge)
+            return
+
+        current_status = existing.get("edge_status", "")
+        if status_priority.get(edge_status or "", 0) > status_priority.get(current_status, 0):
+            existing["edge_status"] = edge_status
+        if timestamp and (not existing.get("timestamp") or timestamp < existing["timestamp"]):
+            existing["timestamp"] = timestamp
+
+    # 按时间排序 records，确保边的代表时间稳定。
     sorted_records = sorted(
         [r for r in records if isinstance(r, dict)],
-        key=lambda x: x.get("@timestamp", "") or ""
+        key=lambda x: x.get("@timestamp", "") or "",
     )
 
     for record in sorted_records:
         src_ip = _get_field(record, ["attack_src", "source.ip", "srcip"])
-        # 新 ECS 索引中 remip 映射为 destination.ip；remip 仅作旧数据兼容。
         target_ip = _get_field(record, ["destination.ip", "dstip", "remip"])
         username = _get_field(record, ["source.user.name", "user", "username", "account"])
         devname = _get_field(record, ["observer.name", "devname", "device"])
@@ -727,190 +765,52 @@ def build_graph_data(raw_data: dict) -> dict:
         msg = _get_field(record, ["message", "msg"])
         event_status = _normalize_record_status(record)
 
-        # --- 第 1 层：IP 连接（攻击者 -> 目标） ---
         if src_ip and target_ip and src_ip != target_ip:
-            edge_key = (src_ip, target_ip)
-            if edge_key not in edge_set:
-                edge_set.add(edge_key)
-                edges.append({
-                    "source": src_ip,
-                    "target": target_ip,
-                    "relation": "connects_to",
-                    "timestamp": ts,
-                    # 【新增】边状态
-                    # IP 连接本身不是成功/失败动作，保持正常状态。
-                    "edge_status": "",
-                })
+            _add_edge(src_ip, target_ip, "connects_to", ts)
 
-        # --- 第 2 层：用户与动作的关系 ---
-        user_id = f"user_{username}" if username and username not in ("-", "", "None", "null") else None
-        
-        # 攻击者 -> 用户（IP 上的操作账户）
+        user_id = f"user_{username}" if username and username not in ("-", "", "None", "null") else ""
+        action_id = f"action_{action.lower()}" if action else ""
+        subtype_id = f"subtype_{subtype.lower()}" if subtype else ""
+        policy_id_str = str(policy_id) if policy_id and policy_id not in ("None", "null", "nan") else ""
+        device_id = f"device_{devname}" if devname else ""
+
         if src_ip and user_id:
-            edge_key = (src_ip, user_id)
-            if edge_key not in edge_set:
-                edge_set.add(edge_key)
-                edges.append({
-                    "source": src_ip,
-                    "target": user_id,
-                    "relation": "uses_account",
-                    "timestamp": ts,
-                    "edge_status": event_status if user_id else "",
-                })
+            _add_edge(src_ip, user_id, "uses_account", ts, event_status)
+        if user_id and action_id:
+            _add_edge(user_id, action_id, "performs_action", ts, event_status)
+        if action_id and subtype_id:
+            _add_edge(action_id, subtype_id, "has_subtype", ts, event_status)
 
-        # 用户 -> 动作（用户执行的动作）
-        if user_id and action:
-            action_id = f"action_{action.lower()}"
-            edge_key = (user_id, action_id)
-            if edge_key not in edge_set:
-                edge_set.add(edge_key)
-                edges.append({
-                    "source": user_id,
-                    "target": action_id,
-                    "relation": "performs_action",
-                    "timestamp": ts,
-                    "edge_status": event_status,
-                })
+        # 没有用户的记录视为下行响应链路。
+        if not user_id and target_ip and action_id:
+            _add_edge(target_ip, action_id, "responds_with", ts, event_status)
+        if not user_id and action_id and policy_id_str:
+            _add_edge(action_id, policy_id_str, "matched_policy", ts, event_status)
+        if subtype_id and device_id:
+            _add_edge(subtype_id, device_id, "targets_device", ts, event_status)
+        if not user_id and device_id and policy_id_str:
+            _add_edge(device_id, policy_id_str, "applies_policy", ts, event_status)
 
-        # --- 第 3 层：动作 -> 子类型的关系 ---
-        if action and subtype:
-            action_id = f"action_{action.lower()}"
-            subtype_id = f"subtype_{subtype.lower()}"
-            edge_key = (action_id, subtype_id)
-            if edge_key not in edge_set:
-                edge_set.add(edge_key)
-                edges.append({
-                    "source": action_id,
-                    "target": subtype_id,
-                    "relation": "has_subtype",
-                    "timestamp": ts,
-                    "edge_status": event_status,
-                })
-
-        # 下行响应链路：host -> response action -> policy。
-        if not user_id and target_ip and action:
-            action_id = f"action_{action.lower()}"
-            edge_key = (target_ip, action_id)
-            if edge_key not in edge_set:
-                edge_set.add(edge_key)
-                edges.append({
-                    "source": target_ip,
-                    "target": action_id,
-                    "relation": "responds_with",
-                    "timestamp": ts,
-                    "edge_status": event_status,
-                })
-
-        # 策略只由下行响应动作连接，避免上行 delete/login 误连到 Policy。
-        if not user_id and action and policy_id and policy_id not in ("", "None", "null", "nan"):
-            action_id = f"action_{action.lower()}"
-            policy_id_str = str(policy_id)
-            edge_key = (action_id, policy_id_str)
-            if edge_key not in edge_set:
-                edge_set.add(edge_key)
-                edges.append({
-                    "source": action_id,
-                    "target": policy_id_str,
-                    "relation": "matched_policy",
-                    "timestamp": ts,
-                    "edge_status": event_status,
-                })
-
-        # 上行链路：subtype -> oss；设备节点本身保持正常状态。
-        if user_id and subtype and devname:
-            subtype_id = f"subtype_{subtype.lower()}"
-            device_id = f"device_{devname}"
-            edge_key = (subtype_id, device_id)
-            if edge_key not in edge_set:
-                edge_set.add(edge_key)
-                edges.append({
-                    "source": subtype_id,
-                    "target": device_id,
-                    "relation": "targets_device",
-                    "timestamp": ts,
-                    "edge_status": event_status,
-                })
-
-        if not user_id and devname and policy_id and policy_id not in ("", "None", "null", "nan"):
-            device_id = f"device_{devname}"
-            policy_id_str = str(policy_id)
-            edge_key = (device_id, policy_id_str)
-            if edge_key not in edge_set:
-                edge_set.add(edge_key)
-                edges.append({
-                    "source": device_id,
-                    "target": policy_id_str,
-                    "relation": "applies_policy",
-                    "timestamp": ts,
-                    "edge_status": event_status,
-                })
-
-        # --- 应用关系（可选，不强制连接到攻击者） ---
-        if app and app not in ("", "None", "null", "nan") and action:
+        if app and app not in ("None", "null", "nan") and action_id:
             app_id = f"app_{app.lower()}"
-            action_id = f"action_{action.lower()}"
-            edge_key = (action_id, app_id)
-            if edge_key not in edge_set:
-                edge_set.add(edge_key)
-                edges.append({
-                    "source": action_id,
-                    "target": app_id,
-                    "relation": "uses_app",
-                    "timestamp": ts,
-                    "edge_status": _compute_edge_status(action_id, app_id),
-                })
+            _add_edge(action_id, app_id, "uses_app", ts, _compute_edge_status(action_id, app_id))
 
-        # --- 从 msg 解析实体关系（增强版） ---
         if msg:
             msg_info = _parse_msg_info(msg)
-            if msg_info["entity_type"] and msg_info["entity_name"]:
-                entity_type = msg_info["entity_type"]
-                entity_name = msg_info["entity_name"]
-
-                # 如果解析出的是用户，添加到用户 -> 动作 的关系中
-                if entity_type == "user" and entity_name not in ("-", "", "None", "null"):
-                    entity_id = f"user_{entity_name}"
-                    # 用户 -> 动作
-                    if action:
-                        action_id = f"action_{action.lower()}"
-                        edge_key = (entity_id, action_id)
-                        if edge_key not in edge_set:
-                            edge_set.add(edge_key)
-                            edges.append({
-                                "source": entity_id,
-                                "target": action_id,
-                                "relation": "performs_action",
-                                "timestamp": ts,
-                                "edge_status": _compute_edge_status(entity_id, action_id),
-                            })
-
-                elif entity_type == "process" and username and entity_name not in ("-", "", "None", "null"):
-                    # 用户 -> 进程
-                    user_id_current = f"user_{username}"
-                    entity_id = entity_name
-                    edge_key = (user_id_current, entity_id)
-                    if edge_key not in edge_set:
-                        edge_set.add(edge_key)
-                        edges.append({
-                            "source": user_id_current,
-                            "target": entity_id,
-                            "relation": "executes",
-                            "timestamp": ts,
-                            "edge_status": _compute_edge_status(user_id_current, entity_id),
-                        })
-                    # 进程 -> 设备
-                    if devname:
-                        device_id = f"device_{devname}"
-                        edge_key = (entity_id, device_id)
-                        if edge_key not in edge_set:
-                            edge_set.add(edge_key)
-                            edges.append({
-                                "source": entity_id,
-                                "target": device_id,
-                                "relation": "runs_on",
-                                "timestamp": ts,
-                                "edge_status": _compute_edge_status(entity_id, device_id),
-                            })
+            entity_type = msg_info.get("entity_type")
+            entity_name = msg_info.get("entity_name")
+            if entity_type == "user" and entity_name not in (None, "-", "", "None", "null") and action_id:
+                _add_edge(
+                    f"user_{entity_name}",
+                    action_id,
+                    "performs_action",
+                    ts,
+                    event_status,
+                )
+            elif entity_type == "process" and username and entity_name not in (None, "-", "", "None", "null"):
+                _add_edge(f"user_{username}", entity_name, "executes", ts, event_status)
+                if device_id:
+                    _add_edge(entity_name, device_id, "runs_on", ts, event_status)
 
     # ========== 3. 统计信息 ==========
     type_dist = {}
@@ -975,6 +875,34 @@ def build_graph_data(raw_data: dict) -> dict:
             "type_distribution": type_dist,
             "relation_distribution": relation_dist,
         }
+    }
+
+
+def compact_graph_data(graph_data: dict) -> dict:
+    """Keep the stable drawing contract while removing analysis-only payload."""
+    if not isinstance(graph_data, dict):
+        return {"nodes": [], "edges": [], "stats": {}}
+
+    node_fields = (
+        "id", "name", "type", "category", "symbolSize", "value",
+        "color", "symbol", "status", "first_seen", "last_seen",
+    )
+    edge_fields = ("source", "target", "relation", "timestamp", "edge_status")
+
+    nodes = [
+        {field: node[field] for field in node_fields if field in node}
+        for node in graph_data.get("nodes", [])
+        if isinstance(node, dict)
+    ]
+    edges = [
+        {field: edge[field] for field in edge_fields if field in edge}
+        for edge in graph_data.get("edges", [])
+        if isinstance(edge, dict)
+    ]
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "stats": graph_data.get("stats", {}),
     }
 
 
@@ -1104,7 +1032,7 @@ def _build_trace_result(raw_result: str, ip: str, start_time: str, end_time: str
         if raw_data and isinstance(raw_data, dict) and raw_data.get("data"):
             # 【修复】构建图前先清洗 NaN/Infinity
             raw_data = _sanitize_nan(raw_data)
-            graph_data = build_graph_data(raw_data)
+            graph_data = compact_graph_data(build_graph_data(raw_data))
             logger.info(f"[build_trace_result] graph_data 构建结果: nodes={len(graph_data.get('nodes', []))}, edges={len(graph_data.get('edges', []))}")
         else:
             logger.warning(f"[build_trace_result] raw_data 为空或 data 字段缺失/为空")

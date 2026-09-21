@@ -757,22 +757,47 @@ async def chat_agent_stream(request: Request):
                                                 ip_graph_count += 1
                                     
                                     if all_nodes or all_edges:
-                                        # 合并节点去重（按 id）
-                                        seen_ids = set()
-                                        merged_nodes = []
+                                        # 合并节点，并按状态优先级保留更严重状态。
+                                        status_priority = {"": 0, "success": 1, "failed": 2, "blocked": 3}
+                                        nodes_by_id = {}
                                         for node in all_nodes:
                                             nid = node.get("id", node.get("name", ""))
-                                            if nid not in seen_ids:
-                                                seen_ids.add(nid)
-                                                merged_nodes.append(node)
-                                        # 合并边去重（按 source->target）
-                                        seen_edges = set()
-                                        merged_edges = []
+                                            if nid not in nodes_by_id:
+                                                nodes_by_id[nid] = dict(node)
+                                                continue
+                                            current = nodes_by_id[nid]
+                                            current_status = current.get("status", "")
+                                            new_status = node.get("status", "")
+                                            if status_priority.get(new_status, 0) > status_priority.get(current_status, 0):
+                                                current["status"] = new_status
+                                            for field in ("first_seen", "last_seen"):
+                                                incoming = node.get(field, "")
+                                                existing = current.get(field, "")
+                                                if incoming and (not existing or (field == "first_seen" and incoming < existing) or (field == "last_seen" and incoming > existing)):
+                                                    current[field] = incoming
+                                        merged_nodes = list(nodes_by_id.values())
+
+                                        # 合并边时必须包含 relation，且状态不能被先到的成功事件覆盖。
+                                        edge_by_key = {}
                                         for edge in all_edges:
-                                            ekey = (edge.get("source", ""), edge.get("target", ""))
-                                            if ekey not in seen_edges:
-                                                seen_edges.add(ekey)
-                                                merged_edges.append(edge)
+                                            ekey = (
+                                                edge.get("source", ""),
+                                                edge.get("target", ""),
+                                                edge.get("relation", ""),
+                                            )
+                                            if ekey not in edge_by_key:
+                                                edge_by_key[ekey] = dict(edge)
+                                                continue
+                                            current = edge_by_key[ekey]
+                                            current_status = current.get("edge_status", "")
+                                            new_status = edge.get("edge_status", "")
+                                            if status_priority.get(new_status, 0) > status_priority.get(current_status, 0):
+                                                current["edge_status"] = new_status
+                                            incoming_ts = edge.get("timestamp", "")
+                                            existing_ts = current.get("timestamp", "")
+                                            if incoming_ts and (not existing_ts or incoming_ts < existing_ts):
+                                                current["timestamp"] = incoming_ts
+                                        merged_edges = list(edge_by_key.values())
                                         
                                         combined_graph_data = {
                                             "nodes": merged_nodes,

@@ -59,6 +59,15 @@ class PipelineSampleTests(unittest.TestCase):
         self.assertTrue(fields["srcip"])
         self.assertTrue(fields["dstip"])
 
+    def test_account_traffic_input_keeps_response_chain_fields(self):
+        raw = load_raw("account_security_samples.json")
+        traffic = next(item for item in raw if item.get("event", {}).get("action") == "traffic")
+        fields = parse_kv_message(prepare_document(traffic, "account_security")["message"])
+        self.assertEqual(fields["dstip"], traffic["destination"]["ip"])
+        self.assertEqual(fields["dstport"], str(traffic["destination"]["port"]))
+        self.assertEqual(fields["policyid"], str(traffic["rule"]["id"]))
+        self.assertEqual(fields["policyname"], traffic["rule"]["name"])
+
     def test_account_and_system_inputs_keep_graph_actions(self):
         for name, scenario in [
             ("account_security_samples.json", "account_security"),

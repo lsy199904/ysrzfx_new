@@ -63,7 +63,7 @@ class GraphDataRegressionTests(unittest.TestCase):
         self.assertIn("attack_src", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("source.ip", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("destination.ip", IP_TRACE_PPL_TEMPLATE)
-        self.assertIn("fortinet.firewall.status", IP_TRACE_PPL_TEMPLATE)
+        self.assertIn("status", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("rule.id", IP_TRACE_PPL_TEMPLATE)
 
     def test_trace_http_error_is_not_reported_as_success(self):
@@ -230,6 +230,92 @@ class GraphDataRegressionTests(unittest.TestCase):
             len(graph["edges"]),
             len(edges),
             "edges should not contain duplicate source/target/relation entries",
+        )
+
+    def test_graph_reads_pipeline_renamed_top_level_status(self):
+        graph = build_graph_data({
+            "data": [{
+                "@timestamp": "2026-09-15 20:22:00",
+                "attack_src": "10.180.26.6",
+                "source.ip": "10.180.26.6",
+                "source.user.name": "support",
+                "observer.name": "GuZ_OFFICE_500E",
+                "event.action": "login",
+                "status": "failed",
+                "fortinet.firewall.subtype": "system",
+                "message": "Login failed for user support",
+            }]
+        })
+        nodes = {node["id"]: node for node in graph["nodes"]}
+        self.assertEqual(nodes["user_support"]["status"], "failed")
+        self.assertEqual(nodes["action_login"]["status"], "failed")
+        self.assertEqual(nodes["subtype_system"]["status"], "failed")
+
+    def test_traffic_graph_connects_subtype_to_oss_and_derives_accept_status(self):
+        records = [
+            {
+                "@timestamp": "2026-09-15 20:21:56",
+                "attack_src": "10.180.26.6",
+                "source.ip": "10.180.26.6",
+                "destination.ip": "10.180.158.209",
+                "observer.name": "DS_KXCFG_100F",
+                "event.action": "accept",
+                "fortinet.firewall.subtype": "forward",
+                "rule.id": "24",
+                "rule.name": "FROM_TCP_CHD_Luke",
+            }
+        ]
+
+        graph = build_graph_data({"data": records})
+        nodes = {node["id"]: node for node in graph["nodes"]}
+        edges = {
+            (edge["source"], edge["target"], edge["relation"]): edge
+            for edge in graph["edges"]
+        }
+
+        self.assertEqual(nodes["10.180.158.209"]["status"], "success")
+        self.assertEqual(nodes["action_accept"]["status"], "success")
+        self.assertEqual(nodes["24"]["status"], "success")
+        self.assertIn(
+            ("subtype_forward", "device_DS_KXCFG_100F", "targets_device"),
+            edges,
+        )
+        self.assertEqual(
+            edges[("10.180.158.209", "action_accept", "responds_with")]["edge_status"],
+            "success",
+        )
+        self.assertEqual(
+            edges[("subtype_forward", "device_DS_KXCFG_100F", "targets_device")]["edge_status"],
+            "success",
+        )
+
+    def test_login_failure_message_propagates_to_action_and_edge_without_status_field(self):
+        graph = build_graph_data({
+            "data": [{
+                "@timestamp": "2026-09-15 20:22:00",
+                "attack_src": "10.180.26.6",
+                "source.ip": "10.180.26.6",
+                "destination.ip": "10.180.3.147",
+                "source.user.name": "zhou_hui",
+                "observer.name": "GuZ_OFFICE_500E",
+                "event.action": "login",
+                "event.reason": "invalid_credentials",
+                "message": "Login failed for user zhou_hui",
+                "fortinet.firewall.subtype": "system",
+            }]
+        })
+        nodes = {node["id"]: node for node in graph["nodes"]}
+        edges = {
+            (edge["source"], edge["target"], edge["relation"]): edge
+            for edge in graph["edges"]
+        }
+
+        self.assertEqual(nodes["user_zhou_hui"]["status"], "failed")
+        self.assertEqual(nodes["action_login"]["status"], "failed")
+        self.assertEqual(nodes["subtype_system"]["status"], "failed")
+        self.assertEqual(
+            edges[("user_zhou_hui", "action_login", "performs_action")]["edge_status"],
+            "failed",
         )
 
 

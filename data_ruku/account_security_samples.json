@@ -3138,7 +3138,7 @@
   {
     "@timestamp": "2026-03-26T10:38:56+00:00",
     "@gid": "19936",
-    "message": "2026-03-26T10:38:56+00:00 10.180.120.160 date=2026-03-26 time=10:38:56 devname=GuZ_OFFICE_500E devid=FGT19936 type=event subtype=log_only action=traffic srcip=10.180.120.160 status=pass srccountry=China logdesc=\"Default internal traffic policy\" msg=\"Traffic allowed by Policy 8.0: 10.180.120.160 -> 10.180.3.147:443\"",
+    "message": "2026-03-26T10:38:56+00:00 10.180.120.160 date=2026-03-26 time=10:38:56 devname=GuZ_OFFICE_500E devid=FGT19936 type=event subtype=log_only action=traffic reason=\"Policy 8.0 matched\" srcip=10.180.120.160 dstip=10.180.3.147 dstport=443 policyid=8 policyname=\"Policy 8.0\" status=pass srccountry=China logdesc=\"Default internal traffic policy\" msg=\"Traffic allowed by Policy 8.0: 10.180.120.160 -> 10.180.3.147:443\"",
     "event": {
       "action": "traffic",
       "reason": "Policy 8.0 matched"
@@ -3203,7 +3203,7 @@
   {
     "@timestamp": "2026-03-26T10:48:33+00:00",
     "@gid": "19936",
-    "message": "2026-03-26T10:48:33+00:00 10.180.120.160 date=2026-03-26 time=10:48:33 devname=GuZ_OFFICE_500E devid=FGT19936 type=event subtype=log_only action=traffic srcip=10.180.120.160 status=pass srccountry=China logdesc=\"Default internal traffic policy\" msg=\"Traffic allowed by Policy 8.0: 10.180.120.160 -> 10.180.3.147:8080\"",
+    "message": "2026-03-26T10:48:33+00:00 10.180.120.160 date=2026-03-26 time=10:48:33 devname=GuZ_OFFICE_500E devid=FGT19936 type=event subtype=log_only action=traffic reason=\"Policy 8.0 matched\" srcip=10.180.120.160 dstip=10.180.3.147 dstport=8080 policyid=8 policyname=\"Policy 8.0\" status=pass srccountry=China logdesc=\"Default internal traffic policy\" msg=\"Traffic allowed by Policy 8.0: 10.180.120.160 -> 10.180.3.147:8080\"",
     "event": {
       "action": "traffic",
       "reason": "Policy 8.0 matched"
@@ -3292,7 +3292,7 @@
   {
     "@timestamp": "2026-03-26T11:01:05+00:00",
     "@gid": "19936",
-    "message": "2026-03-26T11:01:05+00:00 10.180.120.160 date=2026-03-26 time=11:01:05 devname=GuZ_OFFICE_500E devid=FGT19936 type=event subtype=log_only action=traffic srcip=10.180.120.160 status=pass srccountry=China logdesc=\"Default internal traffic policy\" msg=\"Traffic allowed by Policy 8.0: 10.180.120.160 -> 10.180.3.147:22\"",
+    "message": "2026-03-26T11:01:05+00:00 10.180.120.160 date=2026-03-26 time=11:01:05 devname=GuZ_OFFICE_500E devid=FGT19936 type=event subtype=log_only action=traffic reason=\"Policy 8.0 matched\" srcip=10.180.120.160 dstip=10.180.3.147 dstport=22 policyid=8 policyname=\"Policy 8.0\" status=pass srccountry=China logdesc=\"Default internal traffic policy\" msg=\"Traffic allowed by Policy 8.0: 10.180.120.160 -> 10.180.3.147:22\"",
     "event": {
       "action": "traffic",
       "reason": "Policy 8.0 matched"
