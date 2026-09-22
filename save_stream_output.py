@@ -191,7 +191,12 @@ def call_and_save_stream_output(
             json.dump(result, file, ensure_ascii=False, indent=2)
         else:
             for event in events:
-                file.write(json.dumps(event.get("data"), ensure_ascii=False) + "\n")
+                data = event.get("data")
+                if isinstance(data, dict) and "answer" in data:
+                    # 只输出 answer 字段
+                    file.write(json.dumps({"answer": data["answer"]}, ensure_ascii=False) + "\n")
+                else:
+                    file.write(json.dumps(data, ensure_ascii=False) + "\n")
 
     with open(txt_file, "w", encoding="utf-8") as file:
         file.write("=" * 60 + "\n")
@@ -205,11 +210,9 @@ def call_and_save_stream_output(
         if response_error:
             file.write(f"Response Error: {response_error}\n")
         file.write("\n" + "-" * 60 + "\n")
-        for index, event in enumerate(events, 1):
-            file.write(f"Event {index} ({event['event']})\n")
-            file.write(f"Raw SSE: {event['raw_sse']}\n")
-            file.write(json.dumps(event["data"], ensure_ascii=False, indent=2))
-            file.write("\n\n")
+        for event in events:
+            file.write(json.dumps(event["data"], ensure_ascii=False))
+            file.write("\n")
 
     print("\n" + "=" * 60)
     print(f"HTTP 状态码：{status_code}")

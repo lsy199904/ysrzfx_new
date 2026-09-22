@@ -184,6 +184,8 @@ if __name__ == "__main__":
         session_id=f"{test_session_id}_gid_auth_1",
         # user_input="2026年gid19934的9月15日有哪些暴力破解记录",
         user_input="2026年gid19936的3月26日有哪些暴力破解记录",
+        # user_input="What are the brute force attack records for gid 19936 on March 26, 2026?",
+        # user_input="What are the brute force attack logs for gid 99999?",
         # user_input="查询2026年3月26日gid为19936的网络攻击记录",
         # user_input = "查询2026年3月26日的wang_wu的账户变更日志" ,
         # user_input = "查询2026年3月26日的admin的系统安全监控记录",
