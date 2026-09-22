@@ -292,15 +292,21 @@ class ToolExecutor:
             # 【修复】使用安全异步运行器，确保 contextvars 正确传播
             cached_data = self._run_async(ToolCacheManager.get_cached_result(self.tool_name, cache_params))
             if cached_data:
+                is_chinese = self._is_chinese(self.user_problem)
                 steps = [{
                     "step": 1,
-                    "title": "缓存命中",
-                    "detail": "相同查询已从缓存返回，无需重复查询 ES"
+                    "title": "缓存命中" if is_chinese else "Cache Hit",
+                    "detail": (
+                        "相同查询已从缓存返回，无需重复查询 ES"
+                        if is_chinese
+                        else "The same query was served from cache; Elasticsearch was not queried again."
+                    )
                 }]
                 result = {
-                    "steps": steps,
                     "from_cache": True,
-                    **cached_data
+                    **cached_data,
+                    # Never reuse step labels cached by an older language policy.
+                    "steps": steps,
                 }
                 return result
         except Exception as e:
@@ -606,10 +612,21 @@ class ToolExecutor:
                 # 无论索引是否存在，都记录探测步骤，供前端步骤列表展示
                 from tools.index_config import INDEX_SOURCE_PATTERN
                 actual_pattern = index_info.get("pattern", INDEX_SOURCE_PATTERN)
+                is_chinese = self._is_chinese(self.user_problem)
                 self.index_check_steps = [{
                     "step": 1,
-                    "title": "索引存在性探测",
-                    "detail": f"探测索引模式：{actual_pattern}\n探测用户组：{self.gid or '全部白名单'}\n探测结果：{'存在' if exists else '不存在'}",
+                    "title": "索引存在性探测" if is_chinese else "Index Existence Check",
+                    "detail": (
+                        f"探测索引模式：{actual_pattern}\n"
+                        f"探测用户组：{self.gid or '全部白名单'}\n"
+                        f"探测结果：{'存在' if exists else '不存在'}"
+                        if is_chinese
+                        else (
+                            f"Index pattern: {actual_pattern}\n"
+                            f"User groups: {self.gid or 'all allowed groups'}\n"
+                            f"Result: {'exists' if exists else 'not found'}"
+                        )
+                    ),
                 }]
                 
                 if err_msg:

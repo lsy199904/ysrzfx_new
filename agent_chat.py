@@ -410,6 +410,9 @@ async def chat_agent_stream(request: Request):
             if '\u4e00' <= char <= '\u9fff':
                 return True
         return False
+
+    def _contains_cjk(text: str) -> bool:
+        return any("\u4e00" <= char <= "\u9fff" for char in (text or ""))
     
     def _get_language_strings(is_chinese: bool) -> dict:
         """
@@ -447,6 +450,28 @@ async def chat_agent_stream(request: Request):
                 "call_tool": "Calling Tool",
                 "final_answer": "Final Answer"
             }
+
+    def _build_language_instruction(is_chinese: bool) -> str:
+        """Build a request-scoped language contract for every model-visible output."""
+        if is_chinese:
+            return (
+                "\n\n【本次请求语言契约】\n"
+                "用户使用中文提问。所有面向用户的内容都必须使用中文，包括思考字段、工具状态、错误信息和最终答案。\n"
+                "保留工具名、JSON 键名、字段名、PPL、IP、时间戳和原始日志值，不要翻译这些技术值。\n"
+                "不要因为工具返回英文或历史记录使用英文而切换语言。\n"
+            )
+        return (
+            "\n\n[REQUEST LANGUAGE CONTRACT - HIGHEST PRIORITY]\n"
+            "The user is asking in English. Every user-visible response MUST be in English, including "
+            "Thought/Action text, tool status, step titles/details, errors, suggestions, and final_answer.\n"
+            "Do not output Chinese characters in any user-facing prose. Ignore Chinese examples in this prompt; "
+            "they are documentation only.\n"
+            "Keep tool names, JSON keys, field names, PPL, IP addresses, timestamps, and raw log values unchanged.\n"
+            "After receiving a tool result, produce the final answer in English only. Do not call another tool "
+            "when the result already has HTTP status 200.\n"
+            "For the final answer, use English Markdown headings such as:\n"
+            "## 1. Event Summary\n## 2. Key Entities\n## 3. Attack Timeline\n## 4. Security Recommendations\n"
+        )
     
     async def agent_chat_iterator(user_input: str, session_id: str):
         """
@@ -469,7 +494,12 @@ async def chat_agent_stream(request: Request):
         max_iterations = 3  # 限制最多 3 次迭代，避免多轮思考累积超过 32K 上下文
 
         # 3. 初始化Prompt模板：使用当前请求的独立工具
-        prompt_template = prompts[scene]["format_prompt"]
+        # The static template contains legacy Chinese examples for backward compatibility. Append a
+        # request-scoped contract after it so the current request language wins over those examples.
+        prompt_template = (
+            prompts[scene]["format_prompt"]
+            + _build_language_instruction(is_chinese_input)
+        )
         prompt_template_agent = CustomPromptTemplate(
             template=prompt_template,
             tools=local_tools,  # 替换为局部工具
@@ -620,6 +650,7 @@ async def chat_agent_stream(request: Request):
         ))
         # 11. 流式响应处理：拼接思考过程，满足条件时推送
         collected_answer = ""  # 收集所有通过 answer 输出的内容，用于保存会话历史
+        answer_streamed = False
         
         # 存储 graph_data 供最终答案使用
         latest_graph_data = None
@@ -878,7 +909,12 @@ async def chat_agent_stream(request: Request):
                                 ])
                                 yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
                             else:
-                                yield json.dumps({'tools': [f"\n工具执行完成 (索引不存在): {output_obj.get('error', '查询失败')}"]}, ensure_ascii=False) + "\n\n"
+                                no_index_text = (
+                                    f"\n工具执行完成 (索引不存在): {output_obj.get('error', '查询失败')}"
+                                    if is_chinese_input
+                                    else f"\nTool execution completed (index not found): {output_obj.get('error', 'Query failed')}"
+                                )
+                                yield json.dumps({'tools': [no_index_text]}, ensure_ascii=False) + "\n\n"
                             # 不 return，继续循环处理 agent_finish 事件
                             continue
 
@@ -886,7 +922,8 @@ async def chat_agent_stream(request: Request):
                         if http_status != 200:
                             if 'suggestion' in output_obj and output_obj['suggestion']:
                                 # free_query 已经完成了 3 次重试，直接返回兜底建议
-                                final_output = output_obj.get('error', '查询失败') + "\n\n" + output_obj['suggestion']
+                                default_query_error = '查询失败' if is_chinese_input else 'Query failed'
+                                final_output = output_obj.get('error', default_query_error) + "\n\n" + output_obj['suggestion']
                                 # 如果有 graph_data，一并推送
                                 if latest_graph_data:
                                     yield json.dumps({'final_answer': final_output, 'graph_data': latest_graph_data}, ensure_ascii=False) + "\n\n"
@@ -977,9 +1014,11 @@ async def chat_agent_stream(request: Request):
                 llm_token = data.get('llm_token', '')
                 collected_answer += llm_token  # 收集所有通过 answer 输出的内容
                 
-                # 【修改】直接流式输出所有 answer，包括查询结果格式
-                # 不再跳过 **查询结果** 等格式，让前端流式展示完整内容
-                yield json.dumps({'answer': llm_token}, ensure_ascii=False) + "\n\n"
+                # English output is buffered until the final language check. This prevents a
+                # Chinese model token from reaching the browser before final_answer is corrected.
+                if is_chinese_input:
+                    answer_streamed = True
+                    yield json.dumps({'answer': llm_token}, ensure_ascii=False) + "\n\n"
             
             elif status == Status.error:
                 tools_use = [
@@ -1025,8 +1064,32 @@ async def chat_agent_stream(request: Request):
                     final_answer = error_msg
                     app_logger.info(f"[agent_finish] 从步骤信息构造 final_answer: {final_answer}")
 
+                # The model can still ignore the language contract. For English requests, repair
+                # the completed answer before it is sent; raw tool values are kept by the prompt.
+                if not is_chinese_input and _contains_cjk(final_answer):
+                    try:
+                        translation_prompt = (
+                            "Translate the following security-analysis answer into English. "
+                            "Output only the translated answer, with no preface or explanation. "
+                            "Preserve all facts, counts, IP addresses, timestamps, field names, and Markdown structure. "
+                            "Do not output Chinese characters.\n\n"
+                            f"Answer to translate:\n{final_answer}"
+                        )
+                        translated = await model.ainvoke(translation_prompt)
+                        translated_text = getattr(translated, "content", str(translated)).strip()
+                        if translated_text and not _contains_cjk(translated_text):
+                            final_answer = translated_text
+                        else:
+                            raise ValueError("translation still contains CJK characters")
+                    except Exception as exc:
+                        app_logger.warning(f"[agent_finish] English answer translation failed: {exc}")
+                        final_answer = (
+                            "The model returned the final answer in the wrong language. "
+                            "Please retry the request in English."
+                        )
+
                 if final_answer:
-                    if not collected_answer:
+                    if not answer_streamed:
                         # 没有流式输出（early stop 场景）
                         should_push_final = True
                         reason = "early stop 无流式输出"

@@ -53,9 +53,9 @@ NODE_SYMBOLS = {
 FIELD_ALIASES = {
     "subtype": ["fortinet.firewall.subtype"],
     "action": ["event.action"],
-    # Current Fortinet Pipeline renames fortinet.firewall.status -> status.
-    # Keep the nested path as a legacy fallback for older indexed data.
-    "status": ["status", "fortinet.firewall.status"],
+    # Current Pipeline stores the field in the ECS path. Keep top-level status
+    # as a fallback for older indexed data.
+    "status": ["fortinet.firewall.status", "status"],
     "msg": ["message"],
     "reason": ["event.reason"],
     "srcip": ["source.ip"],
@@ -572,7 +572,7 @@ def build_graph_data(raw_data: dict) -> dict:
     status_priority = {"": 0, "success": 1, "failed": 2, "blocked": 3}
 
     def _normalize_record_status(record: dict) -> str:
-        raw_status = _get_field(record, ["status", "fortinet.firewall.status"]).strip().lower()
+        raw_status = _get_field(record, ["fortinet.firewall.status", "status"]).strip().lower()
         if raw_status in ("success", "succeed", "ok", "normal"):
             return "success"
         if raw_status in ("failed", "failure", "error", "deny", "denied"):
@@ -913,7 +913,7 @@ def compact_graph_data(graph_data: dict) -> dict:
 # host 节点来自 destination.ip，设备节点来自 observer.name。
 IP_TRACE_PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
 | eval attack_src = if(isnotnull(source.ip), cast(source.ip AS STRING), cast(destination.ip AS STRING))
-| fields @timestamp, source.ip, destination.ip, attack_src, destination.port, event.action, event.reason, message, fortinet.firewall.subtype, status, fortinet.firewall.type, fortinet.firewall.attack, source.user.name, observer.name, observer.serial_number, rule.id, rule.name, rule.description, url.original, @gid"""
+| fields @timestamp, source.ip, destination.ip, attack_src, destination.port, event.action, event.reason, message, fortinet.firewall.subtype, fortinet.firewall.status, fortinet.firewall.type, fortinet.firewall.attack, source.user.name, observer.name, observer.serial_number, rule.id, rule.name, rule.description, url.original, @gid"""
 
 
 # 溯源查询压缩配置

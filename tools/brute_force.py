@@ -53,14 +53,14 @@ logger = logging.getLogger(__name__)
 
 
 # PPL 查询模板
-# 【字段适配】status 经线上 Pipeline rename 到顶层 status；subtype 仍保留在 fortinet.firewall.subtype。
+# 【字段适配】当前 Pipeline 将状态保存在 fortinet.firewall.status；subtype 仍保留在 fortinet.firewall.subtype。
 PPL_TEMPLATE = f"""search source=`{INDEX_SOURCE_PATTERN}`
 
-| where (fortinet.firewall.subtype='system' and event.action='login' and status='failed') OR (fortinet.firewall.subtype='vpn' and message='SSL user failed to logged in')
+| where (fortinet.firewall.subtype='system' and event.action='login' and fortinet.firewall.status='failed') OR (fortinet.firewall.subtype='vpn' and message='SSL user failed to logged in')
 | where event.reason != 'ip_blocked'
 | where source.ip != '218.92.0.39'
 | eval attack_src = if(isnotnull(source.ip), cast(source.ip AS STRING), cast(destination.ip AS STRING))
-| fields @timestamp, source.user.name, attack_src, source.ip, destination.ip, event.action, event.reason, message, fortinet.firewall.subtype, status, @gid, observer.name, rule.id
+| fields @timestamp, source.user.name, attack_src, source.ip, destination.ip, event.action, event.reason, message, fortinet.firewall.subtype, fortinet.firewall.status, @gid, observer.name, rule.id
 | sort - @timestamp"""
 
 # 压缩配置（与其他工具统一）

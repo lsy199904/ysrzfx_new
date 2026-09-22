@@ -86,6 +86,77 @@ L1_GUIDE_QUESTIONS = {
     "system_security": "显示 2026 年 4 月 20 日的系统安全监控记录"
 }
 
+L1_GUIDE_QUESTIONS_EN = {
+    "brute_force": "What brute-force attack records occurred in April 2026?",
+    "account_security": "What account changes occurred in the last 24 hours?",
+    "network_attack": "Show network attack records for May 10, 2026.",
+    "system_security": "Show system security monitoring records for April 20, 2026.",
+}
+
+
+def _is_chinese(text: str) -> bool:
+    """Return True when the request contains at least one CJK character."""
+    return any("\u4e00" <= char <= "\u9fff" for char in (text or ""))
+
+
+def _free_query_labels(is_chinese: bool) -> dict:
+    """User-visible labels for free-query steps and fallback responses."""
+    if is_chinese:
+        return {
+            "empty_error": "用户问题不能为空",
+            "empty_suggestion": "请描述您想查询的日志内容，例如：'今天有哪些登录失败记录'",
+            "cache_title": "缓存命中",
+            "cache_detail": "相同查询已从缓存返回，无需重复查询 ES",
+            "attempt": "尝试 {attempt}: 生成并执行 PPL",
+            "permission_attempt": "尝试 {attempt}: PPL 生成与权限校验",
+            "source_user": "用户传入",
+            "source_llm": "LLM 生成",
+            "permission_title": "权限校验拦截",
+            "source_detail": "PPL 来源：{source}",
+            "ppl_title": "PPL 查询语句",
+            "result_title": "查询结果",
+            "status": "HTTP 状态码：{status}",
+            "error": ", 错误：{error}",
+            "count": ", 返回 {count} 条记录",
+            "question": "用户问题",
+            "build": "生成 PPL 查询",
+            "execute": "执行 API 查询",
+            "return": "返回结果",
+            "compressed": "原始记录 {count} 条，压缩后 {compressed} 条",
+            "found": "共查询到 {count} 条记录",
+            "exception": "尝试 {attempt}: 异常",
+            "guide_title": "建议使用 L1 场景化提问",
+            "guide_detail": "由于自由查询生成 PPL 失败，建议您使用以下 L1 场景化提问方式：",
+            "failure_error": "PPL 生成失败，已重试 3 次",
+        }
+    return {
+        "empty_error": "The user question cannot be empty.",
+        "empty_suggestion": "Describe the logs you want to query, for example: 'What login failures occurred today?'",
+        "cache_title": "Cache Hit",
+        "cache_detail": "The same query was served from cache; Elasticsearch was not queried again.",
+        "attempt": "Attempt {attempt}: Generate and execute PPL",
+        "permission_attempt": "Attempt {attempt}: Generate PPL and check permissions",
+        "source_user": "User-provided",
+        "source_llm": "LLM-generated",
+        "permission_title": "Permission Check Blocked",
+        "source_detail": "PPL source: {source}",
+        "ppl_title": "PPL Query",
+        "result_title": "Query Result",
+        "status": "HTTP Status: {status}",
+        "error": ", Error: {error}",
+        "count": ", Returned {count} records",
+        "question": "User Question",
+        "build": "Generate PPL Query",
+        "execute": "Execute API Query",
+        "return": "Return Results",
+        "compressed": "Original: {count} records, Compressed: {compressed} records",
+        "found": "Total {count} records found",
+        "exception": "Attempt {attempt}: Exception",
+        "guide_title": "Use an L1 scenario query",
+        "guide_detail": "The free-query PPL generation failed. Try one of these L1 scenario queries:",
+        "failure_error": "PPL generation failed after 3 attempts.",
+    }
+
 
 class FreeQueryInput(BaseModel):
     """自由 PPL 查询工具输入参数模型"""
@@ -190,7 +261,7 @@ def generate_ppl_by_llm(
 - 索引名称固定，不包含日期；所有日期范围必须通过 `@timestamp` 条件过滤
 
 【常见日志类型和字段】
-- 登录日志：fortinet.firewall.subtype='system', event.action='login', status='failed', event.reason, source.ip, remip, source.user.name（仅登录/VPN日志有remip）
+- 登录日志：fortinet.firewall.subtype='system', event.action='login', fortinet.firewall.status='failed', event.reason, source.ip, remip, source.user.name（仅登录/VPN日志有remip）
 - VPN日志：fortinet.firewall.subtype='vpn', message='SSL user failed to logged in', source.ip, remip, source.user.name
 - 账户操作：event.action='Add'/'Delete'/'password reset', fortinet.firewall.cfgpath='user.local', source.user.name
 - IPS 告警：fortinet.firewall.type='utm', fortinet.firewall.subtype='ips', log.level='alert', fortinet.firewall.attack, source.ip, destination.ip, destination.port, event.action, url.original（IPS日志没有remip字段！）
@@ -444,12 +515,15 @@ def free_query_request(
     auth_user = ES_AUTH_USER
     auth_password = ES_AUTH_PASSWORD
     
+    is_chinese = _is_chinese(user_problem)
+    labels = _free_query_labels(is_chinese)
+
     # 验证用户问题
     if not user_problem:
         print(f"[FREE_QUERY] 错误：用户问题为空")
         return json.dumps({
-            "error": "用户问题不能为空",
-            "suggestion": "请描述您想查询的日志内容，例如：'今天有哪些登录失败记录'"
+            "error": labels["empty_error"],
+            "suggestion": labels["empty_suggestion"]
         }, ensure_ascii=False)
 
     # 工具参数可能因模型提取不完整而为空；用户原文中的 gid 仍必须作为约束生效。
@@ -468,7 +542,7 @@ def free_query_request(
         return build_denied_result(
             gid,
             allowed_gids,
-            is_chinese=any('\u4e00' <= char <= '\u9fff' for char in user_problem),
+            is_chinese=is_chinese,
         )
 
     # 【缓存检查】使用统一的 ToolCacheManager（login_account 加入 key，防止不同账号互相命中缓存）
@@ -498,13 +572,14 @@ def free_query_request(
         if cached_data:
             steps = [{
                 "step": 1,
-                "title": "缓存命中",
-                "detail": "相同查询已从缓存返回，无需重复查询 ES"
+                "title": labels["cache_title"],
+                "detail": labels["cache_detail"]
             }]
             result = {
-                "steps": steps,
                 "from_cache": True,
-                **cached_data
+                **cached_data,
+                # Cached records can predate bilingual localization; use the current request language.
+                "steps": steps,
             }
             return json.dumps(result, ensure_ascii=False)
     except Exception as e:
@@ -527,12 +602,12 @@ def free_query_request(
             # 第 1 次尝试：使用传入的 ppl_query 或调用 LLM 生成
             if attempt == 1 and ppl_query:
                 current_ppl = ppl_query.strip()
-                ppl_source = "用户传入"
+                ppl_source = labels["source_user"]
             else:
                 current_ppl = generate_ppl_by_llm(
                     user_problem, attempt, last_error, start_date, end_date
                 )
-                ppl_source = "LLM 生成"
+                ppl_source = labels["source_llm"]
             
             # 规范化 PPL
             current_ppl = _normalize_ppl(current_ppl)
@@ -563,7 +638,7 @@ def free_query_request(
                             denied_result = build_index_invalid_result(
                                 None,
                                 allowed_gids,
-                                is_chinese=any('\u4e00' <= char <= '\u9fff' for char in user_problem),
+                                is_chinese=is_chinese,
                             )
                             return denied_result
                         else:
@@ -573,13 +648,13 @@ def free_query_request(
                                 "steps": [
                                     {
                                         "step": 1,
-                                        "title": f"尝试 {attempt}: PPL 生成与权限校验",
-                                        "detail": f"PPL 来源：{ppl_source}",
+                                        "title": labels["permission_attempt"].format(attempt=attempt),
+                                        "detail": labels["source_detail"].format(source=ppl_source),
                                         "is_code": False
                                     },
                                     {
                                         "step": 2,
-                                        "title": "权限校验拦截",
+                                        "title": labels["permission_title"],
                                         "detail": denied_msg,
                                         "is_code": False
                                     }
@@ -597,14 +672,14 @@ def free_query_request(
             
             attempt_steps.append({
                 "step": attempt,
-                "title": f"尝试 {attempt}: 生成并执行 PPL",
-                "detail": f"PPL 来源：{ppl_source}",
+                "title": labels["attempt"].format(attempt=attempt),
+                "detail": labels["source_detail"].format(source=ppl_source),
                 "is_code": False
             })
             
             attempt_steps.append({
                 "step": attempt,
-                "title": f"PPL 查询语句",
+                "title": labels["ppl_title"],
                 "detail": current_ppl,
                 "is_code": True
             })
@@ -620,8 +695,11 @@ def free_query_request(
             
             attempt_steps.append({
                 "step": attempt,
-                "title": f"查询结果",
-                "detail": f"HTTP 状态码：{http_status}" + (f", 错误：{error_msg}" if error_msg else f", 返回 {count} 条记录"),
+                "title": labels["result_title"],
+                "detail": labels["status"].format(status=http_status) + (
+                    labels["error"].format(error=error_msg)
+                    if error_msg else labels["count"].format(count=count)
+                ),
                 "is_code": False
             })
             
@@ -638,30 +716,32 @@ def free_query_request(
                 
                 # 步骤 4：根据是否压缩，显示不同的信息
                 if compression_info.get("compressed"):
-                    result_detail = f"原始记录 {count} 条，压缩后 {compression_info.get('compressed_count', 0)} 条"
+                    result_detail = labels["compressed"].format(
+                        count=count, compressed=compression_info.get("compressed_count", 0)
+                    )
                 else:
-                    result_detail = f"共查询到 {count} 条记录"
+                    result_detail = labels["found"].format(count=count)
                 
                 final_steps = [
                     {
                         "step": 1,
-                        "title": "用户问题",
+                        "title": labels["question"],
                         "detail": user_problem
                     },
                     {
                         "step": 2,
-                        "title": "生成 PPL 查询",
+                        "title": labels["build"],
                         "detail": ppl_query_str,
                         "is_code": True
                     },
                     {
                         "step": 3,
-                        "title": "执行 API 查询",
-                        "detail": f"HTTP 状态码：{http_status}"
+                        "title": labels["execute"],
+                        "detail": labels["status"].format(status=http_status)
                     },
                     {
                         "step": 4,
-                        "title": "返回结果",
+                        "title": labels["return"],
                         "detail": result_detail
                     }
                 ]
@@ -704,7 +784,7 @@ def free_query_request(
             print(f"异常：{last_error}")
             attempt_steps.append({
                 "step": attempt,
-                "title": f"尝试 {attempt}: 异常",
+                "title": labels["exception"].format(attempt=attempt),
                 "detail": str(e),
                 "is_code": False
             })
@@ -716,36 +796,42 @@ def free_query_request(
     
     guide_steps.append({
         "step": len(guide_steps) + 1,
-        "title": "建议使用 L1 场景化提问",
-        "detail": "由于自由查询生成 PPL 失败，建议您使用以下 L1 场景化提问方式：",
+        "title": labels["guide_title"],
+        "detail": labels["guide_detail"],
         "is_code": False
     })
     
-    failure_text = (
-        f"抱歉，自由查询工具 PPL 生成有误，当前无法完成您的查询。"
-        f"\n\n" 
-        f"**可能原因**："
-        f"\n- 当前时段系统负载较高或 ES 集群暂时不可用"
-        f"\n- 查询条件可能需要进一步明确"
-        f"\n\n"
-        f"**您可以尝试以下方式**："
-        f"\n\n"
-        f"1. **使用场景化提问**"
-        f"\n   示例："
-        f"\n   - `{L1_GUIDE_QUESTIONS['brute_force']}`"
-        f"\n   - `{L1_GUIDE_QUESTIONS['account_security']}`"
-        f"\n   - `{L1_GUIDE_QUESTIONS['network_attack']}`"
-        f"\n   - `{L1_GUIDE_QUESTIONS['system_security']}`"
-        f"\n\n"
-        f"2. **稍后再试** - 系统可能暂时繁忙"
-        f"\n\n"
-        f"3. **简化查询条件** - 减少时间范围或过滤条件"
-    )
+    if is_chinese:
+        failure_text = (
+            "抱歉，自由查询工具 PPL 生成有误，当前无法完成您的查询。\n\n"
+            "**可能原因**：\n- 当前时段系统负载较高或 ES 集群暂时不可用\n"
+            "- 查询条件可能需要进一步明确\n\n"
+            "**您可以尝试以下方式**：\n\n1. **使用场景化提问**\n   示例：\n"
+            f"   - `{L1_GUIDE_QUESTIONS['brute_force']}`\n"
+            f"   - `{L1_GUIDE_QUESTIONS['account_security']}`\n"
+            f"   - `{L1_GUIDE_QUESTIONS['network_attack']}`\n"
+            f"   - `{L1_GUIDE_QUESTIONS['system_security']}`\n\n"
+            "2. **稍后再试** - 系统可能暂时繁忙\n\n"
+            "3. **简化查询条件** - 减少时间范围或过滤条件"
+        )
+    else:
+        failure_text = (
+            "Sorry, the free-query tool could not generate a valid PPL query.\n\n"
+            "**Possible reasons**:\n- The system or Elasticsearch cluster may be busy\n"
+            "- The query conditions may need more detail\n\n"
+            "**Try one of these options**:\n\n1. **Use a scenario query**\n   Examples:\n"
+            f"   - `{L1_GUIDE_QUESTIONS_EN['brute_force']}`\n"
+            f"   - `{L1_GUIDE_QUESTIONS_EN['account_security']}`\n"
+            f"   - `{L1_GUIDE_QUESTIONS_EN['network_attack']}`\n"
+            f"   - `{L1_GUIDE_QUESTIONS_EN['system_security']}`\n\n"
+            "2. **Try again later** - the system may be temporarily busy\n\n"
+            "3. **Simplify the query** - reduce the time range or number of filters"
+        )
     
     final_result = {
         "steps": guide_steps,
         "http_status": 500,
-        "error": "PPL 生成失败，已重试 3 次",
+        "error": labels["failure_error"],
         "suggestion": failure_text,
         "count": 0,
         "data": []

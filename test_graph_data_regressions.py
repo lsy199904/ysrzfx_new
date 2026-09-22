@@ -63,7 +63,7 @@ class GraphDataRegressionTests(unittest.TestCase):
         self.assertIn("attack_src", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("source.ip", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("destination.ip", IP_TRACE_PPL_TEMPLATE)
-        self.assertIn("status", IP_TRACE_PPL_TEMPLATE)
+        self.assertIn("fortinet.firewall.status", IP_TRACE_PPL_TEMPLATE)
         self.assertIn("rule.id", IP_TRACE_PPL_TEMPLATE)
 
     def test_trace_http_error_is_not_reported_as_success(self):
