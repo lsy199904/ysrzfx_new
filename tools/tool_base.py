@@ -20,6 +20,10 @@ from config import (
     COMPRESSION_MAX_TOKENS,
     COMPRESSION_THRESHOLD,
 )
+from utils.log_compressor import COMPRESSION_VERSION, estimate_log_tokens
+
+# 结果缓存版本。压缩字段/返回结构变化时必须递增，避免复用旧缓存。
+CACHE_COMPRESSION_VERSION = COMPRESSION_VERSION
 # 兼容 langchain 0.0.354 和 0.1.x 版本
 try:
     from langchain.agents import Tool
@@ -126,16 +130,16 @@ from dataclasses import dataclass, field
 @dataclass
 class CompressionConfig:
     """压缩配置"""
-    # 压缩触发阈值：数据量 >= 此值时触发压缩
+    # 保留旧配置字段，实际是否压缩由 Token 预算决定。
     threshold: int = COMPRESSION_THRESHOLD
     
-    # 统计类关键词（触发压缩）
+    # 仅供压缩器选择聚合模式，不再单独触发压缩。
     aggregate_keywords: list = field(default_factory=lambda: ["哪些", "多少", "排名", "统计", "top", "主要"])
     
     # Token 限制
     max_tokens: int = COMPRESSION_MAX_TOKENS
     
-    # 返回原始数据条数限制
+    # 历史兼容配置：不再用于截断 data，完整查询结果需要供图谱使用。
     max_return_data: int = COMPRESSION_MAX_RETURN_DATA
 
 
@@ -284,6 +288,7 @@ class ToolExecutor:
             "index_source_pattern": INDEX_SOURCE_PATTERN,
             "login_account": login_account,  # 按账号隔离缓存
             "allowed_gids_hash": allowed_gids_hash,  # 按权限范围隔离缓存
+            "compression_version": CACHE_COMPRESSION_VERSION,
         }
         if self.cache_version:
             cache_params["cache_version"] = self.cache_version
@@ -337,6 +342,7 @@ class ToolExecutor:
             "index_source_pattern": INDEX_SOURCE_PATTERN,
             "login_account": login_account,  # 按账号隔离缓存
             "allowed_gids_hash": allowed_gids_hash,  # 按权限范围隔离缓存
+            "compression_version": CACHE_COMPRESSION_VERSION,
         }
         if self.cache_version:
             cache_params["cache_version"] = self.cache_version
@@ -372,15 +378,16 @@ class ToolExecutor:
         finally:
             loop.close()
     
-    def _needs_compression(self, count: int) -> bool:
-        """判断是否需要压缩"""
-        # 条件 1：数据量 >= 阈值
-        if count >= self.compression_config.threshold:
-            return True
-        # 条件 2：问题包含统计类关键词
-        if any(kw in self.user_problem for kw in self.compression_config.aggregate_keywords):
-            return True
-        return False
+    def _needs_compression(self, data: list) -> bool:
+        """仅当原始日志加摘要接近/超过 LLM Token 预算时压缩。"""
+        if not data:
+            return False
+        estimated_tokens = estimate_log_tokens(data)
+        print(
+            f"[{self.tool_name.upper()}] 原始日志估算 Token：{estimated_tokens}，"
+            f"预算：{self.compression_config.max_tokens}"
+        )
+        return estimated_tokens > self.compression_config.max_tokens
     
     def _build_compression_info(
         self,
@@ -688,15 +695,15 @@ class ToolExecutor:
         count = result.get("count", 0)
         
         # 判断是否需要压缩
-        needs_comp = self._needs_compression(count)
+        needs_comp = self._needs_compression(data)
         
         # 构建压缩信息
         compression_info, summary_text = self._build_compression_info(
             data, count, self.user_problem, needs_comp
         )
         
-        # 构建返回数据（只保留前 N 条）
-        final_data = data[:self.compression_config.max_return_data]
+        # 原始查询结果完整返回。压缩文本只供 LLM 使用，不能截断图谱/溯源数据。
+        final_data = data
         final_count = count
         
         # 构建步骤

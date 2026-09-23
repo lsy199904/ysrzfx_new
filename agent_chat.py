@@ -15,6 +15,7 @@ import logging
 import sys
 import copy 
 import hashlib
+import uuid
 from pathlib import Path
 from typing import Awaitable
 from fastapi.middleware.cors import CORSMiddleware
@@ -341,6 +342,7 @@ async def chat_agent_stream(request: Request):
     data = await request.json()
     session_id = data.get('session_id')
     user_input = data.get('user_input')
+    request_id = str(data.get('request_id') or uuid.uuid4().hex)
     login_account = data.get('login_account', '')
     is_admin = bool(data.get('is_admin', False))
     allowed_gids = data.get('allowed_gids', None)
@@ -349,7 +351,7 @@ async def chat_agent_stream(request: Request):
     # 请求日志
     # ========================================
     app_logger.info(f"\n{'='*60}")
-    app_logger.info(f"【请求开始】session_id: {session_id}, user_input: {user_input}")
+    app_logger.info(f"【请求开始】request_id: {request_id}, session_id: {session_id}, user_input: {user_input}")
     app_logger.info(f"  login_account: {login_account}, is_admin: {is_admin}, allowed_gids: {allowed_gids}")
     app_logger.info(f"{'='*60}\n")
 
@@ -358,7 +360,7 @@ async def chat_agent_stream(request: Request):
     # 2. 非 admin 用户必须携带非空 allowed_gids 白名单
     # 3. admin 用户忽略 allowed_gids，不注入任何过滤
     if not login_account:
-        app_logger.warning(f"[响应] HTTP 403 | 缺少 login_account | session_id: {session_id}")
+        app_logger.warning(f"[响应] HTTP 403 | 缺少 login_account | request_id: {request_id}, session_id: {session_id}")
         return JSONResponse(
             status_code=403,
             content={"error": "请求缺少登录账号信息，无法确认您的数据权限，请退出后重新登录再试。"},
@@ -372,7 +374,7 @@ async def chat_agent_stream(request: Request):
     else:
         normalized_gids = [str(g).strip() for g in (allowed_gids or []) if str(g).strip()]
         if not normalized_gids:
-            app_logger.warning(f"[响应] HTTP 403 | 缺少 allowed_gids | session_id: {session_id}, login_account: {login_account}")
+            app_logger.warning(f"[响应] HTTP 403 | 缺少 allowed_gids | request_id: {request_id}, session_id: {session_id}, login_account: {login_account}")
             return JSONResponse(
                 status_code=403,
                 content={"error": "请求未携带用户组权限信息（allowed_gids），无法确认您的数据权限，请退出后重新登录再试。"},
@@ -385,12 +387,13 @@ async def chat_agent_stream(request: Request):
     request_ctx.set({
         "login_account": login_account,
         "is_admin": is_admin,
-        "allowed_gids": normalized_gids
+        "allowed_gids": normalized_gids,
+        "request_id": request_id,
     })
 
     # 校验必要参数
     if not session_id or not user_input:
-        app_logger.warning(f"[响应] HTTP 400 | 缺少 session_id 或 user_input | session_id: {session_id}, user_input: {user_input}")
+        app_logger.warning(f"[响应] HTTP 400 | 缺少 session_id 或 user_input | request_id: {request_id}, session_id: {session_id}, user_input: {user_input}")
         return JSONResponse(
             status_code=400,
             content={"error": "session_id和user_input为必填参数"},
@@ -401,6 +404,25 @@ async def chat_agent_stream(request: Request):
     scoped_session_id = hashlib.sha256(
         f"{login_account}\0{session_id}".encode("utf-8")
     ).hexdigest()
+
+    # 请求级日志与会话历史分层保存：会话继续承载多轮上下文，请求记录按 request_id 单独追踪。
+    try:
+        mgr = await get_redis_manager_instance()
+        await mgr.save_request_log(
+            scoped_session_id,
+            request_id,
+            {
+                "request_id": request_id,
+                "session_id": session_id,
+                "login_account": login_account,
+                "status": "started",
+                "user_input": user_input,
+                "is_admin": is_admin,
+                "allowed_gids": normalized_gids,
+            },
+        )
+    except Exception as e:
+        app_logger.warning(f"保存请求开始日志失败：request_id={request_id}, error: {e}")
 
     def _is_chinese(text: str) -> bool:
         """
@@ -473,12 +495,12 @@ async def chat_agent_stream(request: Request):
             "## 1. Event Summary\n## 2. Key Entities\n## 3. Attack Timeline\n## 4. Security Recommendations\n"
         )
     
-    async def agent_chat_iterator(user_input: str, session_id: str):
+    async def agent_chat_iterator(user_input: str, session_id: str, request_id: str):
         """
         这是流式响应的核心生成器
         """
         # 1. 实例化当前请求独立的回调函数（无共享状态）
-        callback = CustomAsyncIteratorCallbackHandler()
+        callback = CustomAsyncIteratorCallbackHandler(request_id=request_id)
         
         # 2. 根据用户输入判断语言
         is_chinese_input = _is_chinese(user_input)
@@ -1152,22 +1174,41 @@ async def chat_agent_stream(request: Request):
                         existing_history = await mgr.get_session(session_id)
                         # 追加新对话
                         new_history = existing_history + [
-                            {"type": "human", "data": {"content": user_input}},
-                            {"type": "ai", "data": {"content": final_answer}}
+                            {"type": "human", "request_id": request_id, "data": {"content": user_input}},
+                            {"type": "ai", "request_id": request_id, "data": {"content": final_answer}}
                         ]
                         # 保留最近 10 轮对话（与内存缓存 k=5 对应，每轮 2 条消息）
                         new_history = new_history[-20:]
                         await mgr.save_session(session_id, new_history)
                     except Exception as e:
                         app_logger.warning(f"保存会话历史失败：{e}")
+                    try:
+                        await mgr.save_request_log(
+                            session_id,
+                            request_id,
+                            {
+                                "request_id": request_id,
+                                "session_id": session_id,
+                                "login_account": login_account,
+                                "status": "completed",
+                                "user_input": user_input,
+                                "final_answer": final_answer,
+                                "history_count": len(new_history) if 'new_history' in locals() else None,
+                            },
+                        )
+                    except Exception as e:
+                        app_logger.warning(f"保存请求完成日志失败：request_id={request_id}, error: {e}")
                 # 退出循环
                 break
         # 等待任务完成，释放资源
         await task
 
     # 返回流式响应
-    app_logger.info(f"[响应] HTTP 200 | 正常流式响应 | session_id: {session_id}, user_input: {user_input}")
-    return EventSourceResponse(agent_chat_iterator(user_input, scoped_session_id))
+    app_logger.info(f"[响应] HTTP 200 | 正常流式响应 | request_id: {request_id}, session_id: {session_id}, user_input: {user_input}")
+    return EventSourceResponse(
+        agent_chat_iterator(user_input, scoped_session_id, request_id),
+        headers={"X-Request-ID": request_id},
+    )
 
 
 if __name__ == '__main__':

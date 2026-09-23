@@ -5,7 +5,7 @@
 支持 3 次重试机制，失败后引导用户使用 L1 场景化提问
 
 【压缩配置】（与其他工具统一）
-- 压缩触发阈值：>= 15 条 或 问题包含统计类关键词
+- 压缩触发条件：原始日志和摘要超过 LLM Token 预算
 - max_tokens: 2000
 - 返回数据条数：5 条
 - compressed_count = original_count（压缩不改变实际记录数）
@@ -32,7 +32,13 @@ from tools.common_config import (
 from tools.index_config import INDEX_SOURCE_PATTERN
 from tools.tool_base import ToolCacheManager, CompressionConfig, request_ctx
 from tools.ppl_guard import enforce_gid_permission, extract_ppl_gids, is_gid_empty
-from utils.log_compressor import LogCompressor, generate_summary_statistics, format_summary_text
+from utils.log_compressor import (
+    COMPRESSION_VERSION,
+    LogCompressor,
+    estimate_log_tokens,
+    generate_summary_statistics,
+    format_summary_text,
+)
 from config import (
     COMPRESSION_MAX_RETURN_DATA,
     COMPRESSION_MAX_TOKENS,
@@ -71,7 +77,7 @@ def _run_async(coro):
         loop.close()
 
 
-# 压缩配置（与其他工具统一）
+# 压缩配置（与其他工具统一；是否压缩由 Token 预算决定）
 COMPRESSION_CONFIG = CompressionConfig(
     threshold=COMPRESSION_THRESHOLD,
     max_tokens=COMPRESSION_MAX_TOKENS,
@@ -455,9 +461,12 @@ def _build_compression_info(
         summary_text = format_summary_text(summary_stats)
         print(f"[LogCompressor] 已生成统计摘要：原始记录{count}条，{summary_stats.get('unique_src_ip_count', 0)}个源 IP")
     
-    # 判断是否需要压缩
-    needs_compression = count >= compression_config.threshold or any(
-        kw in user_problem for kw in compression_config.aggregate_keywords
+    # 只有原始日志和摘要超过 LLM Token 预算时才压缩。
+    estimated_tokens = estimate_log_tokens(data, summary_text)
+    needs_compression = estimated_tokens > compression_config.max_tokens
+    print(
+        f"[LogCompressor] 原始日志估算 Token：{estimated_tokens}，"
+        f"预算：{compression_config.max_tokens}"
     )
     
     if needs_compression and data:
@@ -473,11 +482,20 @@ def _build_compression_info(
         )
         
         print(f"压缩后 Token 数：{compressor.estimate_tokens(compressed_text)}")
+
+        # 从压缩说明中读取实际聚合/筛选数量，避免把原始数量误报为压缩后数量。
+        compressed_count = count
+        aggregate_match = re.search(r'聚合后分组数：\s*(\d+)', compressed_text)
+        filtered_match = re.search(r'筛选后保留：\s*(\d+)', compressed_text)
+        if aggregate_match:
+            compressed_count = int(aggregate_match.group(1))
+        elif filtered_match:
+            compressed_count = int(filtered_match.group(1))
         
         compression_info = {
             "compressed": True,
             "original_count": count,
-            "compressed_count": count,
+            "compressed_count": compressed_count,
             "compressed_text": compressed_text,
             "summary_text": summary_text
         }
@@ -564,6 +582,7 @@ def free_query_request(
         "index_source_pattern": INDEX_SOURCE_PATTERN,
         "login_account": login_account,  # 按账号隔离缓存
         "allowed_gids_hash": allowed_gids_hash,  # 按权限范围隔离缓存
+        "compression_version": COMPRESSION_VERSION,
     }
     
     try:
@@ -710,8 +729,8 @@ def free_query_request(
                     data, count, user_problem, COMPRESSION_CONFIG
                 )
                 
-                # 构建返回数据（只保留前 N 条，与其他工具统一为 5 条）
-                final_data = data[:COMPRESSION_CONFIG.max_return_data]
+                # 原始查询结果完整返回；LLM 使用 compression.compressed_text。
+                final_data = data
                 final_count = count
                 
                 # 步骤 4：根据是否压缩，显示不同的信息

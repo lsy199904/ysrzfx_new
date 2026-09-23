@@ -93,6 +93,7 @@ async def inspect_redis():
     print("\n【5. 按类型分组统计】")
     prefixes = {
         "session:": "会话数据",
+        "request:": "请求日志",
         "cache:tool:": "工具缓存",
         "cache:query:": "查询缓存",
         "lock:": "分布式锁",

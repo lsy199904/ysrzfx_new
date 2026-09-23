@@ -63,6 +63,7 @@ class RedisManager:
     # Redis Key 前缀
     KEY_PREFIX = {
         "session": "session",
+        "request": "request",
         "cache_tool": "cache:tool",
         "cache_query": "cache:query",
         "lock": "lock",
@@ -74,6 +75,7 @@ class RedisManager:
     # 默认过期时间（秒）
     DEFAULT_TTL = {
         "session": SESSION_TTL,
+        "request": SESSION_TTL,
         "cache_tool": CACHE_TOOL_TTL,
         "cache_query": 600,     # 查询缓存 10 分钟
         "ratelimit": 60,        # 限流 1 分钟
@@ -189,6 +191,61 @@ class RedisManager:
     def _session_key(self, session_id: str, suffix: str = "history") -> str:
         """生成会话 Key"""
         return f"{self.KEY_PREFIX['session']}:{session_id}:{suffix}"
+
+    def _request_key(self, session_id: str, request_id: str, suffix: str = "log") -> str:
+        """生成请求级日志 Key；session_id 已包含账号隔离作用域。"""
+        safe_session = hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()
+        safe_request = hashlib.sha256(str(request_id).encode("utf-8")).hexdigest()
+        return f"{self.KEY_PREFIX['request']}:{safe_session}:{safe_request}:{suffix}"
+
+    async def save_request_log(
+        self,
+        session_id: str,
+        request_id: str,
+        record: Dict[str, Any],
+        ttl: Optional[int] = None,
+    ):
+        """保存一次请求的完整生命周期记录，不改变会话历史。"""
+        try:
+            await self._ensure_connection()
+            key = self._request_key(session_id, request_id)
+            ttl = ttl or self.DEFAULT_TTL["request"]
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: self.client.setex(
+                    key,
+                    ttl,
+                    json.dumps(record, ensure_ascii=False),
+                ),
+            )
+            logger.debug(f"请求日志已保存：session={session_id}, request={request_id}")
+        except Exception as e:
+            logger.warning(f"保存请求日志失败：request={request_id}, error: {e}")
+
+    async def get_request_log(self, session_id: str, request_id: str) -> Dict[str, Any]:
+        """读取一次请求的生命周期记录。"""
+        try:
+            await self._ensure_connection()
+            loop = asyncio.get_event_loop()
+            data = await loop.run_in_executor(
+                None, self.client.get, self._request_key(session_id, request_id)
+            )
+            return json.loads(data) if data else {}
+        except Exception as e:
+            logger.warning(f"获取请求日志失败：request={request_id}, error: {e}")
+            return {}
+
+    async def delete_request_log(self, session_id: str, request_id: str):
+        """删除一次请求的生命周期记录。"""
+        try:
+            await self._ensure_connection()
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, self.client.delete, self._request_key(session_id, request_id)
+            )
+        except Exception as e:
+            logger.warning(f"删除请求日志失败：request={request_id}, error: {e}")
     
     async def save_session(
         self,

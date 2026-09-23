@@ -38,7 +38,7 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
     """
     定义自定义异步迭代器回调处理器
     """
-    def __init__(self): 
+    def __init__(self, request_id: str = None):
         #调用父类构造函数
         super().__init__()
         #创建异步队列
@@ -50,6 +50,7 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
         self.has_output_final_answer = False  # 标记是否已输出过 final_answer
         self.task_ref = None  # 对 executor 协程的引用，用于 early stop 时取消任务
         self.agent_stop = False  # 兜底结果标识：探测失败时跳过后续 LLM 调用
+        self.request_id = request_id or ""
 
     async def on_tool_start(self, serialized: Dict[str, Any], input_str: str, *, run_id: UUID,
                             parent_run_id: UUID | None = None, tags: List[str] | None = None,
@@ -67,6 +68,7 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
 
         self.cur_tool = {
             "tool_name": serialized["name"],
+            "request_id": self.request_id,
             "input_str": input_str,
             "output_str": "",
             "status": Status.tool_start,
@@ -122,6 +124,7 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
                 # 创建独立的 agent_finish 事件字典，避免与 tool_finish 共用同一对象
                 agent_finish_event = {
                     "status": Status.agent_finish,
+                    "request_id": self.request_id,
                     "final_answer": suggestion,
                 }
                 if steps:
@@ -475,6 +478,7 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
             # 返回最终答案
             cur_tool_data = {
                 "status": Status.agent_finish,
+                "request_id": self.request_id,
                 "final_answer": final_answer,
                 "final_answer_length": len(final_answer),  # 额外记录长度
             }
