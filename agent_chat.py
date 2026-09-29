@@ -15,9 +15,16 @@ import logging
 import sys
 import copy 
 import hashlib
+import re
 import uuid
 from pathlib import Path
 from typing import Awaitable
+from stream_formatter import (
+    ThoughtStreamParser,
+    clean_final_answer,
+    split_thoughts,
+    thought_event_to_answer,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 import uvicorn
@@ -264,13 +271,14 @@ prompts = {
             "   - 账户影响：被锁定的账户（account_locked）、密码错误次数最多的账户、是否存在成功登录\n"
             "   - 综合分析：一句话定性攻击性质（如：内网主机被感染后横向爆破 / 公网 IP 自动化撞库 / 历史攻击复盘等）\n\n"
             "   ## 3. 攻击详细时间线TOP3\n"
-            "   每个 IP 一段，按 4 阶段组织（首次探测 → 首次尝试 → 批量爆破 → 最终结果）。时间戳格式：工具返回精确时间戳时用 [HH:MM:SS]，仅有时段时用 约 HH:MM。示例（精确时间戳场景）：\n"
+            "   每个 IP 一段，必须先收集该 IP 的所有事件并严格按每条日志的 `@timestamp` 升序排列后再输出。时间顺序是唯一的排列依据；‘首次探测’、‘首次尝试’、‘批量爆破’、‘最终结果’只允许作为事件标签，绝不能为了凑成固定四阶段而重排真实时间。时间戳格式：工具返回精确时间戳时用 [HH:MM:SS]，仅有时段时用 约 HH:MM。\n"
             "   **重要：IP 次数和占比数据在工具的 `ip_stats` 字段中已预计算好，请直接使用其中的 `count` 和 `percentage` 字段，禁止 LLM 自行计算！**\\n"\
             "   攻击源：<IP>（X 次，占 Y%）\n"
-            "   - [HH:MM:SS] 【首次探测】访问目标 <设备名> 的 <端口>（协议：<协议>）\n"
-            "   - [HH:MM:SS] 【首次尝试】以用户 <user> 身份登录 <设备>，结果：<成功/失败 + 原因>\n"
-            "   - [HH:MM:SS] ~ [HH:MM:SS] 【批量爆破】持续尝试，涉及用户 <user1>、<user2>...，共 X 次\n"
-            "   - [HH:MM:SS] 【最终结果】攻击停止（原因：<账户锁定/防火墙拦截/攻击结束/成功登录>）\n"
+            "   - 只有日志中确实存在最早的探测事件时，才标记【首次探测】；之后发生的探测必须按原时间位置标记【后续探测】，不得移到时间线开头。\n"
+            "   - 只有日志中确实存在最早的尝试/登录事件时，才标记【首次尝试】；后续尝试继续按时间顺序输出。\n"
+            "   - 连续或批量事件可以标记【批量爆破】，但该标签不能改变事件在时间线中的位置。\n"
+            "   - 只有日志明确表明攻击在所查询窗口内结束，才标记【最终结果】；较早发生的锁定、拦截或中间状态只能标记【阶段结果】，不能称为最终结果。\n"
+            "   - 禁止补造工具未返回的阶段、事件、IP、用户或时间；缺失阶段直接省略，不要强制输出四个阶段。\n"
             "   剩余 IP：另有 X 个攻击源 IP 因篇幅省略，详见原始记录。\n\n"
             "   ## 4. 安全建议（按历史/近期语境区分）\n"
             "   - 历史复盘场景（查询日期距今超过 7 天）：\n"
@@ -492,6 +500,10 @@ async def chat_agent_stream(request: Request):
             "Keep tool names, JSON keys, field names, PPL, IP addresses, timestamps, and raw log values unchanged.\n"
             "After receiving a tool result, produce the final answer in English only. Do not call another tool "
             "when the result already has HTTP status 200.\n"
+            "For every attack timeline, sort all events by their actual @timestamp in ascending order before writing. "
+            "Stage labels such as First Probe, First Attempt, Brute Force, Stage Result, and Final Result are annotations only and must never reorder events. "
+            "Use Subsequent Probe for later probes, use Stage Result for an earlier lock/block/interception, and use Final Result only when the logs prove the attack ended in the queried window. "
+            "Omit unsupported stages instead of inventing them.\n"
             "For the final answer, use English Markdown headings such as:\n"
             "## 1. Event Summary\n## 2. Key Entities\n## 3. Attack Timeline\n## 4. Security Recommendations\n"
         )
@@ -671,9 +683,11 @@ async def chat_agent_stream(request: Request):
             callback.task_ref,
             callback.done
         ))
-        # 11. 流式响应处理：拼接思考过程，满足条件时推送
-        collected_answer = ""  # 收集所有通过 answer 输出的内容，用于保存会话历史
-        answer_streamed = False
+        # 11. 流式响应处理：思考增量单独推送，正式答案在 agent_finish 时推送
+        collected_answer = ""  # 保留原始模型输出用于诊断日志
+        thought_stream = ThoughtStreamParser()
+        final_answer_sent = False
+        stream_error = ""
         
         # 存储 graph_data 供最终答案使用
         latest_graph_data = None
@@ -720,7 +734,8 @@ async def chat_agent_stream(request: Request):
                 # app_logger.info(f"\n【END output_str】")
                 
                 # 检测工具返回是否包含"最终答案："前缀，直接返回
-                if output_str.startswith("最终答案："):
+                final_prefix_match = re.match(r"^(?:最终答案|Final Answer)\s*[:：]\s*", output_str, re.IGNORECASE)
+                if final_prefix_match:
                     # 【新增】尝试从 output_str 中解析 JSON 获取 graph_data
                     local_graph_data = None
                     try:
@@ -731,13 +746,18 @@ async def chat_agent_stream(request: Request):
                     except (json.JSONDecodeError, TypeError):
                         pass
                     
-                    final_answer_content = output_str.replace("最终答案：", "").strip()
+                    raw_final_answer = output_str[final_prefix_match.end():].strip()
+                    thought_text, final_answer_content = split_thoughts(raw_final_answer)
+                    if thought_text:
+                        for answer_fragment in ("<think>", thought_text, "</think>"):
+                            yield json.dumps({"answer": answer_fragment}, ensure_ascii=False) + "\n\n"
                     # 如果有 graph_data，一并推送（优先使用 local_graph_data，否则使用 latest_graph_data）
                     graph_data_to_push = local_graph_data or latest_graph_data
+                    final_answer_sent = True
                     if graph_data_to_push:
-                        yield json.dumps({'final_answer': final_answer_content, 'graph_data': graph_data_to_push}, ensure_ascii=False) + "\n\n"
+                        yield json.dumps({'final_answer': final_answer_content, 'graph_data': graph_data_to_push, 'is_final': True, 'format': 'markdown'}, ensure_ascii=False) + "\n\n"
                     else:
-                        yield json.dumps({'final_answer': final_answer_content}, ensure_ascii=False) + "\n\n"
+                        yield json.dumps({'final_answer': final_answer_content, 'is_final': True, 'format': 'markdown'}, ensure_ascii=False) + "\n\n"
                     task.cancel()
                     try:
                         await task
@@ -795,6 +815,7 @@ async def chat_agent_stream(request: Request):
                                     # brute_force 自动溯源场景：从 ip_details 中提取每个 IP 的 graph_data
                                     all_nodes = []
                                     all_edges = []
+                                    all_render_lines = []
                                     ip_graph_count = 0
                                     for detail in ip_details:
                                         # app_logger.info(f"[DEBUG] Detail keys: {list(detail.keys())}, has_graph: {bool(detail.get('graph_data'))}")
@@ -808,6 +829,10 @@ async def chat_agent_stream(request: Request):
                                             if isinstance(ip_gd, dict) and (ip_gd.get("nodes") or ip_gd.get("edges")):
                                                 all_nodes.extend(ip_gd.get("nodes", []))
                                                 all_edges.extend(ip_gd.get("edges", []))
+                                                all_render_lines.extend(
+                                                    line for line in ip_gd.get("render_lines", [])
+                                                    if isinstance(line, dict)
+                                                )
                                                 ip_graph_count += 1
                                     
                                     if all_nodes or all_edges:
@@ -856,6 +881,7 @@ async def chat_agent_stream(request: Request):
                                         combined_graph_data = {
                                             "nodes": merged_nodes,
                                             "edges": merged_edges,
+                                            "render_lines": [],
                                             "stats": {
                                                 "node_count": len(merged_nodes),
                                                 "edge_count": len(merged_edges),
@@ -874,6 +900,15 @@ async def chat_agent_stream(request: Request):
                                                 ip_dist = ip_stats.get("type_distribution", {})
                                                 for k, v in ip_dist.items():
                                                     combined_graph_data["stats"]["type_distribution"][k] = combined_graph_data["stats"]["type_distribution"].get(k, 0) + v
+
+                                        # Keep the ordered lane paths alongside the
+                                        # legacy merged nodes/edges graph.
+                                        render_by_id = {}
+                                        for line in all_render_lines:
+                                            line_id = line.get("line_id")
+                                            if line_id and line_id not in render_by_id:
+                                                render_by_id[line_id] = line
+                                        combined_graph_data["render_lines"] = list(render_by_id.values())
                                         
                                         # app_logger.info(f"[DEBUG] Extracted graph_data: nodes={len(merged_nodes)}, edges={len(merged_edges)}")
                                         latest_graph_data = combined_graph_data
@@ -947,11 +982,16 @@ async def chat_agent_stream(request: Request):
                                 # free_query 已经完成了 3 次重试，直接返回兜底建议
                                 default_query_error = '查询失败' if is_chinese_input else 'Query failed'
                                 final_output = output_obj.get('error', default_query_error) + "\n\n" + output_obj['suggestion']
+                                thought_text, final_output = split_thoughts(final_output)
+                                if thought_text:
+                                    for answer_fragment in ("<think>", thought_text, "</think>"):
+                                        yield json.dumps({"answer": answer_fragment}, ensure_ascii=False) + "\n\n"
                                 # 如果有 graph_data，一并推送
+                                final_answer_sent = True
                                 if latest_graph_data:
-                                    yield json.dumps({'final_answer': final_output, 'graph_data': latest_graph_data}, ensure_ascii=False) + "\n\n"
+                                    yield json.dumps({'final_answer': clean_final_answer(final_output), 'graph_data': latest_graph_data, 'is_final': True, 'format': 'markdown'}, ensure_ascii=False) + "\n\n"
                                 else:
-                                    yield json.dumps({'final_answer': final_output}, ensure_ascii=False) + "\n\n"
+                                    yield json.dumps({'final_answer': clean_final_answer(final_output), 'is_final': True, 'format': 'markdown'}, ensure_ascii=False) + "\n\n"
                                 task.cancel()
                                 try:
                                     await task
@@ -1035,15 +1075,15 @@ async def chat_agent_stream(request: Request):
             
             elif status in (Status.start, Status.running):
                 llm_token = data.get('llm_token', '')
-                collected_answer += llm_token  # 收集所有通过 answer 输出的内容
-                
-                # English output is buffered until the final language check. This prevents a
-                # Chinese model token from reaching the browser before final_answer is corrected.
-                if is_chinese_input:
-                    answer_streamed = True
-                    yield json.dumps({'answer': llm_token}, ensure_ascii=False) + "\n\n"
+                collected_answer += llm_token  # 收集原始模型输出用于诊断
+
+                # Expose only tagged thought fragments as ``answer``; never leak
+                # raw ReAct Action/Observation text to the browser.
+                for thought_event in thought_stream.feed(llm_token):
+                    yield json.dumps({"answer": thought_event_to_answer(thought_event)}, ensure_ascii=False) + "\n\n"
             
             elif status == Status.error:
+                stream_error = data.get('error', '') or stream_error
                 tools_use = [
                     f"\n {str_lang['tool_executed_failed']}",
                     f"{str_lang['error_msg']}: {data.get('error', str_lang['unknown_error'])}"
@@ -1053,6 +1093,12 @@ async def chat_agent_stream(request: Request):
             elif status == Status.agent_finish:
                 final_answer = data.get("final_answer", "")
                 index_check_steps = data.get("steps", [])
+                for thought_event in thought_stream.flush():
+                    yield json.dumps({"answer": thought_event_to_answer(thought_event)}, ensure_ascii=False) + "\n\n"
+                thought_text, final_answer = split_thoughts(final_answer)
+                if thought_text:
+                    for answer_fragment in ("<think>", thought_text, "</think>"):
+                        yield json.dumps({"answer": answer_fragment}, ensure_ascii=False) + "\n\n"
                 # app_logger.info(f"\n{'='*60}")
                 # app_logger.info(f"=== agent_finish DEBUG ===")
                 # app_logger.info(f"final_answer 长度：{len(final_answer)}")
@@ -1112,28 +1158,17 @@ async def chat_agent_stream(request: Request):
                         )
 
                 if final_answer:
-                    if not answer_streamed:
-                        # 没有流式输出（early stop 场景）
-                        should_push_final = True
-                        reason = "early stop 无流式输出"
-                    elif final_answer in collected_answer:
-                        # final_answer 是流式的子集（重复了）
-                        should_push_final = False
-                        reason = "final_answer 已被流式包含"
-                    elif collected_answer in final_answer:
-                        # 流式是 final_answer 的子集（流式没输出完就 early stop）
-                        should_push_final = True
-                        reason = "流式片段，需补全"
-                    else:
-                        # 内容差异大（如流式是工具调用 JSON，final_answer 是真正答案）
-                        should_push_final = True
-                        reason = "内容不同"
+                    # Raw model tokens are never sent as ``answer`` anymore, so
+                    # the cleaned final answer is always the authoritative event.
+                    should_push_final = True
+                    reason = "final_answer authoritative event"
 
                 # 无论是否推送到 SSE，始终记录完整 final_answer
                 app_logger.info(f"[agent_finish] 最终输出 (pushed={should_push_final}, reason={reason}, len={len(final_answer)}): {final_answer}")
 
                 if should_push_final:
-                    yield json.dumps({"final_answer": final_answer, "steps": index_check_steps}, ensure_ascii=False) + "\n\n"
+                    final_answer_sent = True
+                    yield json.dumps({"final_answer": clean_final_answer(final_answer), "steps": index_check_steps, "is_final": True, "format": "markdown"}, ensure_ascii=False) + "\n\n"
 
                 # 【修复】流完后只推一次 graph_data（精简版），作为"处理完成"信号
                 if latest_trace_info or latest_graph_data:
@@ -1201,6 +1236,21 @@ async def chat_agent_stream(request: Request):
                         app_logger.warning(f"保存请求完成日志失败：request_id={request_id}, error: {e}")
                 # 退出循环
                 break
+        if not final_answer_sent:
+            fallback_answer = (
+                "请求未完成，服务处理过程中发生异常，请稍后重试。"
+                if is_chinese_input
+                else "The request did not complete because the service encountered an error. Please try again."
+            )
+            app_logger.warning(
+                f"[agent_chat] 未收到 final_answer，发送统一兜底完成事件: {stream_error or 'unknown error'}"
+            )
+            yield json.dumps({
+                "final_answer": fallback_answer,
+                "is_final": True,
+                "format": "markdown",
+                "error": stream_error or None,
+            }, ensure_ascii=False) + "\n\n"
         # 等待任务完成，释放资源
         await task
 

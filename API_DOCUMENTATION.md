@@ -33,20 +33,28 @@ curl -X POST http://192.168.101.110:5050/agentchat \
 
 | 事件类型 | 响应示例 | 说明 |
 |---------|---------|------|
-| `answer` | `{"answer": "正在查询..."}` | AI 生成的文本片段 |
+| `answer` | `{"answer": "<think>"}` / `{"answer": "分析用户问题"}` / `{"answer": "</think>"}` | 思考过程增量；开始和结束使用 `<think>` / `</think>` 标记 |
 | `tools` | `{"tools": ["调用工具：xxx"]}` | 工具调用信息 |
-| `final_answer` | `{"final_answer": "查询结果..."}` | 最终答案 |
+| `final_answer` | `{"final_answer": "**查询结果**...", "is_final": true, "format": "markdown"}` | 清理思考标签后的正式答案；前端应按 Markdown 渲染并对最终答案区域加粗 |
 | `error` | `{"error": "错误信息"}` | 错误信息 |
 
 ## 响应示例
 
 ```
-data: {"answer": "正在为您查询..."}
+data: {"answer": "<think>"}
+
+data: {"answer": "分析用户问题并选择工具"}
+
+data: {"answer": "</think>"}
 
 data: {"tools": ["调用工具：free_query_request"]}
 
-data: {"final_answer": "**查询结果**\n\n- 总记录数：10 条\n- 关键发现：..."}
+data: {"final_answer": "**查询结果**\n\n- 总记录数：10 条\n- 关键发现：...", "is_final": true, "format": "markdown"}
 ```
+
+> 兼容说明：服务端仍使用 `answer` 字段，但只发送经过边界标记的思考内容，不发送未经处理的 Action/Observation。前端遇到 `<think>` 后进入思考区域，遇到 `</think>` 后结束思考区域；收到 `final_answer` 后渲染正式答案。
+
+图谱事件中的 `graph_data` 继续保留原有 `nodes`、`edges`、`stats` 字段，并新增 `render_lines`。`render_lines` 是供双通道/时序线路图使用的聚合路径，包含 `line_id`、`direction`、`count`、`status`、`steps`，下行流量线路可能额外包含 `details.destination_ip` 和 `details.destination_port`。
 
 ---
 

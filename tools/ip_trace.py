@@ -461,6 +461,165 @@ def _add_node(nodes_map: dict, identifier: str, node_type: str, record: dict,
         }
 
 
+def _render_line_status(record: dict, direction: str) -> str:
+    """Normalize record status for the two-lane render contract."""
+    raw_status = _get_field(record, ["fortinet.firewall.status", "status"]).strip().lower()
+    action = _get_field(record, ["event.action", "action"]).strip().lower()
+
+    if direction == "lower":
+        if raw_status in ("blocked", "block", "quarantine", "intercepted") or action in ("deny", "denied", "block", "blocked", "quarantine"):
+            return "blocked"
+        if raw_status in ("failed", "failure", "error"):
+            return "failed"
+        if raw_status in ("accept", "accepted", "pass", "passed", "allowed") or action in ("accept", "accepted", "pass", "passed", "allowed"):
+            return "pass"
+        if raw_status in ("success", "succeed", "ok", "normal"):
+            return "success"
+        return raw_status or "unknown"
+
+    if raw_status in ("blocked", "block", "quarantine", "intercepted"):
+        return "blocked"
+    if raw_status in ("failed", "failure", "error", "deny", "denied"):
+        return "failed"
+    if raw_status in ("success", "succeed", "ok", "normal", "accept", "accepted", "pass", "passed", "allowed"):
+        return "success"
+    return raw_status or "unknown"
+
+
+def _render_line_safe_part(value: str) -> str:
+    """Create a stable URL/DOM-friendly line id fragment."""
+    value = str(value or "").strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "-", value).strip("-")
+    return value or "unknown"
+
+
+def _build_render_lines(records: list) -> list:
+    """Build compact, ordered paths for a frontend two-lane renderer.
+
+    This is intentionally additive: the existing graph nodes and edges remain
+    the source of truth for the force graph, while render_lines provides the
+    ordered business path and per-path aggregation for a lane/flow view.
+    """
+    grouped = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+
+        attacker = _get_field(record, ["attack_src", "source.ip", "srcip"])
+        target_ip = _get_field(record, ["destination.ip", "dstip", "remip"])
+        user = _get_field(record, ["source.user.name", "user", "username", "account"])
+        action = _get_field(record, ["event.action", "action"])
+        subtype = _get_field(record, ["fortinet.firewall.subtype", "subtype"])
+        oss = _get_field(record, ["observer.name", "devname", "device"])
+        policy_id = _get_field(record, ["rule.id", "policyid"])
+        policy_name = _get_field(record, ["rule.name", "policyname"])
+        destination_port = _get_field(record, ["destination.port", "dstport"])
+        timestamp = record.get("@timestamp", "") or ""
+
+        valid_user = user not in ("", "-", "None", "null", "nan", "N/A")
+        direction = "upper" if valid_user else "lower"
+        render_action = action
+        if direction == "lower" and action.strip().lower() in ("accept", "accepted", "allow", "allowed", "pass", "passed"):
+            render_action = "traffic"
+        status = _render_line_status(record, direction)
+
+        if direction == "upper":
+            base_parts = ["upper", user, render_action, subtype]
+        else:
+            base_parts = ["lower", render_action or subtype or "traffic", destination_port]
+        base_id = "-".join(_render_line_safe_part(part) for part in base_parts if part)
+
+        steps = []
+        if attacker:
+            steps.append({"type": "attacker", "name": attacker})
+        if valid_user:
+            steps.append({"type": "user", "name": user})
+        elif target_ip:
+            steps.append({"type": "host", "name": target_ip})
+        if render_action:
+            steps.append({"type": "action", "name": render_action})
+        if subtype:
+            steps.append({"type": "subtype", "name": subtype})
+        if oss:
+            steps.append({"type": "oss", "name": oss})
+        if direction == "lower" and policy_id:
+            steps.append({"type": "policy", "name": policy_name or f"Policy {policy_id}"})
+
+        key = (
+            direction,
+            attacker,
+            target_ip if direction == "lower" else "",
+            user if valid_user else "",
+            render_action,
+            subtype,
+            oss,
+            str(policy_id),
+            str(destination_port),
+            status,
+        )
+        line = grouped.setdefault(key, {
+            "base_id": base_id,
+            "direction": direction,
+            "count": 0,
+            "status": status,
+            "first_seen": "",
+            "last_seen": "",
+            "steps": steps,
+            "details": {},
+        })
+        line["count"] += 1
+        if timestamp:
+            if not line["first_seen"] or timestamp < line["first_seen"]:
+                line["first_seen"] = timestamp
+            if not line["last_seen"] or timestamp > line["last_seen"]:
+                line["last_seen"] = timestamp
+        if direction == "lower":
+            if target_ip:
+                line["details"]["destination_ip"] = target_ip
+            if destination_port:
+                try:
+                    line["details"]["destination_port"] = int(destination_port)
+                except (TypeError, ValueError):
+                    line["details"]["destination_port"] = destination_port
+
+    # Add a status suffix only when one path has multiple statuses. This keeps
+    # ids concise for ordinary paths while avoiding collisions for success/
+    # failed variants of the same user/action chain.
+    status_counts = {}
+    for line in grouped.values():
+        status_counts.setdefault(line["base_id"], set()).add(line["status"])
+
+    render_lines = []
+    used_ids = set()
+    for line in grouped.values():
+        line_id = line["base_id"]
+        if len(status_counts.get(line_id, set())) > 1:
+            line_id = f"{line_id}-{_render_line_safe_part(line['status'])}"
+        if line_id in used_ids:
+            # Different attackers can share the same visible path. Keep the
+            # id deterministic without changing the displayed steps.
+            attacker = next((step["name"] for step in line["steps"] if step["type"] == "attacker"), "")
+            line_id = f"{line_id}-{_render_line_safe_part(attacker)}"
+        used_ids.add(line_id)
+
+        output = {
+            "line_id": line_id,
+            "direction": line["direction"],
+            "count": line["count"],
+            "status": line["status"],
+            "steps": line["steps"],
+        }
+        if line["first_seen"]:
+            output["first_seen"] = line["first_seen"]
+        if line["last_seen"]:
+            output["last_seen"] = line["last_seen"]
+        if line["details"]:
+            output["details"] = line["details"]
+        render_lines.append(output)
+
+    return render_lines
+
+
 def build_graph_data(raw_data: dict) -> dict:
     """
     将原始溯源数据转换为 {nodes, edges} 图结构
@@ -478,7 +637,7 @@ def build_graph_data(raw_data: dict) -> dict:
     """
     if not raw_data or not isinstance(raw_data, dict):
         logger.warning("[build_graph_data] 原始数据为空或格式错误")
-        return {"nodes": [], "edges": [], "stats": {"node_count": 0, "edge_count": 0, "type_distribution": {}}}
+        return {"nodes": [], "edges": [], "stats": {"node_count": 0, "edge_count": 0, "type_distribution": {}}, "render_lines": []}
 
     # 获取实际数据（非压缩时取 data 数组）
     records = raw_data.get("data", [])
@@ -486,7 +645,7 @@ def build_graph_data(raw_data: dict) -> dict:
         logger.warning(f"[build_graph_data] 数据数组为空！raw_data keys: {list(raw_data.keys())}")
         # 打印完整 raw_data 用于调试
         logger.warning(f"[build_graph_data] 完整 raw_data: {json.dumps(raw_data, ensure_ascii=False)[:1000]}")
-        return {"nodes": [], "edges": [], "stats": {"node_count": 0, "edge_count": 0, "type_distribution": {}}}
+        return {"nodes": [], "edges": [], "stats": {"node_count": 0, "edge_count": 0, "type_distribution": {}}, "render_lines": []}
     
     logger.info(f"[build_graph_data] 开始处理 {len(records)} 条记录")
     # 打印第一条记录的键，用于调试字段映射
@@ -862,10 +1021,12 @@ def build_graph_data(raw_data: dict) -> dict:
 
     # 【新增】构建攻击阶段分组
     attack_stages = _build_attack_stages(timeline, records)
+    render_lines = _build_render_lines(records)
 
     return {
         "nodes": nodes,
         "edges": edges,
+        "render_lines": render_lines,
         "timeline": timeline,            # 【新增】时间线事件序列（按时间排序）
         "timeline_range": timeline_range, # 【新增】时间范围
         "attack_stages": attack_stages,   # 【新增】攻击阶段分组
@@ -881,7 +1042,7 @@ def build_graph_data(raw_data: dict) -> dict:
 def compact_graph_data(graph_data: dict) -> dict:
     """Keep the stable drawing contract while removing analysis-only payload."""
     if not isinstance(graph_data, dict):
-        return {"nodes": [], "edges": [], "stats": {}}
+        return {"nodes": [], "edges": [], "stats": {}, "render_lines": []}
 
     node_fields = (
         "id", "name", "type", "category", "symbolSize", "value",
@@ -902,6 +1063,10 @@ def compact_graph_data(graph_data: dict) -> dict:
     return {
         "nodes": nodes,
         "edges": edges,
+        "render_lines": [
+            dict(line) for line in graph_data.get("render_lines", [])
+            if isinstance(line, dict)
+        ],
         "stats": graph_data.get("stats", {}),
     }
 
@@ -1004,6 +1169,44 @@ def build_trace_window(attack_time: str, pre_minutes: int = 5) -> dict:
     return {
         "start_time": start_time.strftime('%Y-%m-%d %H:%M:%S'),
         "end_time": end_time.strftime('%Y-%m-%d %H:%M:%S'),
+    }
+
+
+def build_trace_window_range(
+    first_time: str,
+    last_time: str,
+    pre_minutes: int = 30,
+    post_minutes: int = 30,
+) -> dict:
+    """Build a trace window around the complete observed event range.
+
+    Automatic tracing must cover the full observed campaign for one IP rather
+    than stopping at its earliest event. Callers pass timestamps already
+    normalized to their query timezone.
+    """
+    def parse_time(value: str, is_end: bool) -> datetime:
+        value = str(value or "").strip()
+        for fmt in (
+            '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S',
+        ):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                continue
+        try:
+            parsed = datetime.strptime(value, '%Y-%m-%d')
+            return parsed.replace(hour=23, minute=59, second=59) if is_end else parsed
+        except ValueError:
+            return datetime.now()
+
+    first = parse_time(first_time, is_end=False)
+    last = parse_time(last_time, is_end=True)
+    if last < first:
+        first, last = last, first
+    return {
+        "start_time": (first - timedelta(minutes=pre_minutes)).strftime('%Y-%m-%d %H:%M:%S'),
+        "end_time": (last + timedelta(minutes=post_minutes)).strftime('%Y-%m-%d %H:%M:%S'),
     }
 
 

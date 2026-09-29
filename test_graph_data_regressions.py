@@ -2,6 +2,7 @@ import json
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 # The production environment installs these dependencies. Lightweight fallbacks
 # keep the pure unit tests runnable in a minimal development interpreter.
@@ -26,7 +27,13 @@ except ImportError:
     sys.modules["langchain.agents"] = agents_stub
     sys.modules["langchain.schema"] = schema_stub
 
-from tools.brute_force import _get_ip_first_attack_time, _normalize_attack_time
+from tools.brute_force import (
+    _auto_trace_brute_force_ips,
+    _get_ip_attack_time_range,
+    _get_ip_first_attack_time,
+    _normalize_attack_time,
+)
+from tools.ip_trace import build_trace_window_range
 from tools.ip_trace import IP_TRACE_PPL_TEMPLATE, _build_trace_result, build_graph_data
 
 
@@ -55,6 +62,52 @@ class GraphDataRegressionTests(unittest.TestCase):
         self.assertEqual(
             _get_ip_first_attack_time(result, "10.180.120.160"),
             "2026-03-26 19:03:21",
+        )
+
+    def test_ip_trace_window_covers_earliest_and_latest_attack(self):
+        result = {
+            "data": [
+                {"attack_src": "10.180.120.160", "@timestamp": "2026-03-26 10:35:12"},
+                {"attack_src": "10.180.120.160", "@timestamp": "2026-03-26 11:03:21"},
+                {"attack_src": "10.180.120.160", "@timestamp": "2026-03-26 11:40:00"},
+            ]
+        }
+        first, last = _get_ip_attack_time_range(result, "10.180.120.160")
+        self.assertEqual(first, "2026-03-26 10:35:12")
+        self.assertEqual(last, "2026-03-26 11:40:00")
+        self.assertEqual(
+            build_trace_window_range(first, last, pre_minutes=30, post_minutes=30),
+            {
+                "start_time": "2026-03-26 10:05:12",
+                "end_time": "2026-03-26 12:10:00",
+            },
+        )
+
+    @patch("tools.brute_force.ip_trace_request")
+    def test_brute_force_auto_trace_uses_full_ip_range(self, trace_request):
+        trace_request.return_value = {
+            "trace_info": {
+                "status": "success",
+                "time_window": "2026-03-26 10:05:12 ~ 2026-03-26 12:10:00",
+            }
+        }
+        result = _auto_trace_brute_force_ips(
+            {
+                "data": [
+                    {"attack_src": "10.180.120.160", "@timestamp": "2026-03-26 10:35:12"},
+                    {"attack_src": "10.180.120.160", "@timestamp": "2026-03-26 11:40:00"},
+                ]
+            },
+            start_time="2026-03-26 00:00:00",
+            end_time="2026-03-26 23:59:59",
+            gid=None,
+        )
+        self.assertEqual(result["status"], "success")
+        trace_request.assert_called_once_with(
+            ip="10.180.120.160",
+            start_time="2026-03-26 10:05:12",
+            end_time="2026-03-26 12:10:00",
+            gid=None,
         )
 
     def test_trace_query_uses_only_persisted_ip_fields(self):
@@ -250,6 +303,57 @@ class GraphDataRegressionTests(unittest.TestCase):
         self.assertEqual(nodes["user_support"]["status"], "failed")
         self.assertEqual(nodes["action_login"]["status"], "failed")
         self.assertEqual(nodes["subtype_system"]["status"], "failed")
+
+    def test_render_lines_adds_ordered_upper_and_lower_paths(self):
+        graph = build_graph_data({
+            "data": [
+                {
+                    "@timestamp": "2026-03-26 10:35:12",
+                    "source.ip": "10.180.120.160",
+                    "source.user.name": "li_si",
+                    "observer.name": "GuZ_OFFICE_500E",
+                    "event.action": "Delete",
+                    "fortinet.firewall.subtype": "config",
+                    "fortinet.firewall.status": "success",
+                },
+                {
+                    "@timestamp": "2026-03-26 11:03:21",
+                    "source.ip": "10.180.120.160",
+                    "source.user.name": "support",
+                    "observer.name": "GuZ_OFFICE_500E",
+                    "event.action": "login",
+                    "fortinet.firewall.subtype": "system",
+                    "fortinet.firewall.status": "failed",
+                },
+                {
+                    "@timestamp": "2026-03-26 11:03:22",
+                    "source.ip": "10.180.120.160",
+                    "destination.ip": "10.180.3.147",
+                    "destination.port": 443,
+                    "observer.name": "GuZ_OFFICE_500E",
+                    "event.action": "accept",
+                    "fortinet.firewall.subtype": "log_only",
+                    "rule.id": "8.0",
+                    "rule.name": "Policy 8.0",
+                },
+            ]
+        })
+
+        self.assertIn("render_lines", graph)
+        self.assertEqual(len(graph["render_lines"]), 3)
+        upper = [line for line in graph["render_lines"] if line["direction"] == "upper"]
+        lower = [line for line in graph["render_lines"] if line["direction"] == "lower"]
+        self.assertEqual(len(upper), 2)
+        self.assertEqual(len(lower), 1)
+        self.assertEqual(upper[0]["steps"][0], {"type": "attacker", "name": "10.180.120.160"})
+        self.assertEqual(lower[0]["status"], "pass")
+        self.assertEqual(lower[0]["line_id"], "lower-traffic-443")
+        self.assertEqual(lower[0]["steps"][2], {"type": "action", "name": "traffic"})
+        self.assertEqual(lower[0]["details"], {
+            "destination_ip": "10.180.3.147",
+            "destination_port": 443,
+        })
+        self.assertEqual(lower[0]["steps"][-1], {"type": "policy", "name": "Policy 8.0"})
 
     def test_traffic_graph_connects_subtype_to_oss_and_derives_accept_status(self):
         records = [

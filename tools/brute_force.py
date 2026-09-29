@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig, calculate_ip_stats
 from tools.index_config import INDEX_SOURCE_PATTERN
 from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
-from tools.ip_trace import ip_trace_request, build_trace_window
+from tools.ip_trace import ip_trace_request, build_trace_window_range
 
 
 def _normalize_attack_time(timestamp_str: str) -> str:
@@ -174,11 +174,37 @@ def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str:
         # 没找到该 IP 的记录，回退到全局最早时间
         logger.warning(f"[Trace] IP {target_ip} 在数据中未找到记录，回退到全局最早时间")
         return _get_first_attack_time(raw_result)
-
     except Exception as e:
         logger.error(f"[Trace] 提取 IP {target_ip} 攻击时间失败: {e}", exc_info=True)
         return _get_first_attack_time(raw_result)
 
+
+def _get_ip_attack_time_range(raw_result: dict, target_ip: str) -> tuple[str, str]:
+    """Return the earliest and latest observed attack time for one IP."""
+    try:
+        timestamps = []
+        for record in raw_result.get("data", []):
+            if not isinstance(record, dict):
+                continue
+            ip = record.get("attack_src") or record.get("source.ip") or record.get("destination.ip")
+            timestamp = record.get("@timestamp")
+            if ip == target_ip and timestamp:
+                timestamps.append(_normalize_attack_time(timestamp))
+
+        if timestamps:
+            first_time, last_time = min(timestamps), max(timestamps)
+            logger.info(
+                f"[Trace] IP {target_ip} 攻击时间范围: {first_time} ~ {last_time}"
+            )
+            return first_time, last_time
+
+        fallback = _get_first_attack_time(raw_result)
+        logger.warning(f"[Trace] IP {target_ip} 未找到时间范围，回退到全局最早时间: {fallback}")
+        return fallback, fallback
+    except Exception as e:
+        logger.error(f"[Trace] 提取 IP {target_ip} 攻击时间范围失败: {e}", exc_info=True)
+        fallback = _get_first_attack_time(raw_result)
+        return fallback, fallback
 
 def _auto_trace_brute_force_ips(raw_result: dict, start_time: str, end_time: str, gid: str) -> dict:
     """自动对暴力破解检测到的攻击 IP 执行溯源查询"""
@@ -196,19 +222,22 @@ def _auto_trace_brute_force_ips(raw_result: dict, start_time: str, end_time: str
                 "ip_details": []
             }
         
-        # 【修复】每个 IP 各自计算自己的首次攻击时间，得到独立的 time_window
-        # 原代码：所有 IP 共享全局首次时间，导致后攻击的 IP 窗口可能错过它自己的攻击
+        # 每个 IP 使用完整的攻击时间范围，而非仅最早一条记录。
         logger.info(f"[Trace] 开始对 {len(trace_ips)} 个 IP 执行溯源查询（每个 IP 独立时间窗口）")
 
         # 对每个 IP 执行溯源查询
         ip_details = []
         for ip in trace_ips:
             try:
-                # 【修复】取该 IP 自己的首次攻击时间
-                # 【可调】溯源时间窗口：5 分钟太短容易漏上下文，30 分钟是经验值
-                # 暴力破解攻击通常在 5-15 分钟内完成，但关联事件（账号创建、配置变更）可能更早
-                ip_first_time = _get_ip_first_attack_time(raw_result, ip)
-                ip_window = build_trace_window(ip_first_time, pre_minutes=30)
+                # 覆盖最早攻击前 30 分钟至最晚攻击后 30 分钟，避免
+                # 漏掉同一 IP 在当天后续发生的攻击、锁定或拦截记录。
+                ip_first_time, ip_last_time = _get_ip_attack_time_range(raw_result, ip)
+                ip_window = build_trace_window_range(
+                    ip_first_time,
+                    ip_last_time,
+                    pre_minutes=30,
+                    post_minutes=30,
+                )
                 logger.info(f"[Trace] 正在溯源 IP: {ip}，时间窗口：{ip_window['start_time']} ~ {ip_window['end_time']}")
 
                 trace_result = ip_trace_request(

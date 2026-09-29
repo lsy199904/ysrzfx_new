@@ -315,7 +315,7 @@ class CustomOutputParser(AgentOutputParser):
 
         # === 3. 兜底：返回 LLM 输出或友好提示 ===
         # 尝试提取"最终答案："后的内容
-        answer_match = re.search(r'最终答案：\s*(.+?)(?:\n|$)', llm_output, re.DOTALL)
+        answer_match = re.search(r'(?:最终答案|Final Answer)\s*[:：]\s*(.+?)(?:\n|$)', llm_output, re.IGNORECASE | re.DOTALL)
         if answer_match:
             answer_text = answer_match.group(1).strip()
             app_logger.info(f"\n检测到'最终答案：'，长度={len(answer_text)}")

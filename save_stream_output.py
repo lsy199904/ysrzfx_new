@@ -193,7 +193,6 @@ def call_and_save_stream_output(
             for event in events:
                 data = event.get("data")
                 if isinstance(data, dict) and "answer" in data:
-                    # 只输出 answer 字段
                     file.write(json.dumps({"answer": data["answer"]}, ensure_ascii=False) + "\n")
                 else:
                     file.write(json.dumps(data, ensure_ascii=False) + "\n")
