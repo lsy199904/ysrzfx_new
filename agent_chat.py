@@ -1037,11 +1037,9 @@ async def chat_agent_stream(request: Request):
                 llm_token = data.get('llm_token', '')
                 collected_answer += llm_token  # 收集所有通过 answer 输出的内容
                 
-                # English output is buffered until the final language check. This prevents a
-                # Chinese model token from reaching the browser before final_answer is corrected.
-                if is_chinese_input:
-                    answer_streamed = True
-                    yield json.dumps({'answer': llm_token}, ensure_ascii=False) + "\n\n"
+                # 中英文都流式输出 answer，不再按语言分流
+                answer_streamed = True
+                yield json.dumps({'answer': llm_token}, ensure_ascii=False) + "\n\n"
             
             elif status == Status.error:
                 tools_use = [
@@ -1089,6 +1087,14 @@ async def chat_agent_stream(request: Request):
 
                 # The model can still ignore the language contract. For English requests, repair
                 # the completed answer before it is sent; raw tool values are kept by the prompt.
+                # 清理思考标签（支持 <antThinking>...</antThinking> 和 <thinking>...</thinking>）
+                for _close_tag in ['<antThinking/>', '<antThinking>', '</antThinking>', '<thinking/>', '<thinking>', '</thinking>']:
+                    _pos = final_answer.find(_close_tag)
+                    if _pos != -1:
+                        final_answer = final_answer[_pos + len(_close_tag):].strip()
+                        app_logger.info(f"✅ 清理了英文 final_answer 中的 {_close_tag} 标签")
+                        break
+
                 if not is_chinese_input and _contains_cjk(final_answer):
                     try:
                         translation_prompt = (

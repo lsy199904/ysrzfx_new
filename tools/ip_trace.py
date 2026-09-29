@@ -144,17 +144,17 @@ def _type_to_category(type_str: str) -> int:
 def _parse_action_name(action: str) -> str:
     """从 action 字段解析友好的动作名称"""
     action_map = {
-        "accept": "允许",
-        "deny": "拒绝",
-        "blocked": "阻断",
-        "pass": "通过",
-        "log": "记录",
-        "login": "登录",
-        "logout": "登出",
-        "delete": "删除",
-        "create": "创建",
-        "update": "更新",
-        "modify": "修改",
+        "accept": "accept",
+        "deny": "deny",
+        "blocked": "blocked",
+        "pass": "pass",
+        "log": "log",
+        "login": "login",
+        "logout": "logout",
+        "delete": "delete",
+        "create": "create",
+        "update": "update",
+        "modify": "modify",
     }
     action_lower = action.lower() if action else ""
     return action_map.get(action_lower, action or "未知动作")
