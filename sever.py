@@ -382,13 +382,13 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
                 app_logger.info(f"\nLLM 生成文本总长度：{len(full_text)}")
                 
                 # 检查是否包含思考标签
-                has_thought_start = '<think>' in full_text
-                has_thought_end = '</think>' in full_text
-                app_logger.info(f"  - 包含 <think> 标签：{has_thought_start}")
-                app_logger.info(f"  - 包含 </think> 标签：{has_thought_end}")
+                has_thought_start = '<antThinking' in full_text or '<thinking' in full_text
+                has_thought_end = '</antThinking>' in full_text or '</thinking>' in full_text or '<antThinking/>' in full_text
+                app_logger.info(f"  - 包含思考开始标签（<antThinking>|<thinking>）：{has_thought_start}")
+                app_logger.info(f"  - 包含思考结束标签（</antThinking>|</thinking>|<antThinking/>）：{has_thought_end}")
                 
                 if has_thought_start and not has_thought_end:
-                    app_logger.info(f"  ⚠️ 警告：发现未闭合的 <think> 标签，模型思考被截断！")
+                    app_logger.info(f"  ⚠️ 警告：发现未闭合思考标签，模型思考被截断！")
                 
                 app_logger.info(f"\n【完整 LLM 输出内容】:")
                 app_logger.info(f"{full_text}")

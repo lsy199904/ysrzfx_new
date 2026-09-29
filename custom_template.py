@@ -77,55 +77,98 @@ class CustomOutputParser(AgentOutputParser):
         app_logger.info(f"llm_output 总长度：{len(llm_output)}")
         app_logger.info(f"\n【完整 llm_output 内容】:\n{llm_output}\n【END llm_output】")
 
-        # === 0. 清理 Qwen3 思考模式标签 ===
-        # Qwen3 默认开启思考模式，生成 <think>...</think> 标签包裹的推理内容
-        # 这些推理内容会干扰 ReAct 格式解析，需要提取 </think> 之后的有效内容
-        if '</think>' in llm_output:
-            llm_output = llm_output.split('</think>', 1)[1].strip()
-            app_logger.info(f"\n检测到 </think> 标签，提取 </think> 之后的内容")
-            app_logger.info(f"清理后 llm_output 长度：{len(llm_output)}")
-            app_logger.info(f"清理后内容：{llm_output}")
-        elif '<think>' in llm_output or '<' + '' + 'tool_call>' in llm_output:
-            # 只有 <think> 没有 </think>，说明思考内容被截断
-            # 【修复】不再直接返回错误，而是尝试多种策略恢复 Action
-            app_logger.info(f"\n⚠️ 检测到未闭合的 <think> 标签（思考被截断），尝试恢复 Action/Answer")
 
-            # 策略 A: 在 thinking 块中匹配"行动：xxx"或"Action: xxx"，思考中可能直接给出 Action
-            inner_action_match = re.search(
+        # === 0. 清理思考模式标签（支持两种格式） ===
+        # 格式 1: <antThinking>...</antThinking>
+        # 格式 2: <thinking>...</thinking>
+        # 这些推理内容会干扰 ReAct 格式解析，需要提取思考标签之后的有效内容
+        _thought_close_tags = [
+            '<antThinking/>', '<antThinking>', '</antThinking>',
+            '<thinking/>', '<thinking>', '</thinking>',
+        ]
+        _first_close_pos = len(llm_output)
+        _close_tag_used = None
+        for _tag in _thought_close_tags:
+            _pos = llm_output.find(_tag)
+            if _pos != -1 and _pos < _first_close_pos:
+                _first_close_pos = _pos
+                _close_tag_used = _tag
+
+        if _close_tag_used is not None:
+            _after_thought = llm_output[_first_close_pos + len(_close_tag_used):].strip()
+            if _after_thought:
+                llm_output = _after_thought
+                _tag_name = _close_tag_used.rstrip('/')
+                app_logger.info(f"\n检测到 {_tag_name} 标签，提取 {_tag_name}> 之后的内容")
+                app_logger.info(f"清理后 llm_output 长度：{len(llm_output)}")
+                app_logger.info(f"清理后内容：{llm_output}")
+            else:
+                app_logger.info(f"\n⚠️ 检测到思考标签但标签后无内容（思考被截断），尝试恢复 Action/Answer")
+                _inner_action_match = re.search(
+                    r'(?:行动|Action)\s*[：:]\s*([a-zA-Z_][a-zA-Z0-9_]*)',
+                    llm_output, re.IGNORECASE
+                )
+                _natural_action_match = re.search(
+                    r'(?:我应该使用|调用|使用|选择)\s*([a-zA-Z_][a-zA-Z0-9_]*)',
+                    llm_output
+                )
+                _recovered_action = None
+                if _inner_action_match:
+                    _recovered_action = _inner_action_match.group(1).strip()
+                    app_logger.info(f"策略 A 命中 - 从 thinking 块提取 Action: {_recovered_action}")
+                elif _natural_action_match:
+                    _candidate = _natural_action_match.group(1).strip()
+                    if '_request' in _candidate or _candidate in ['tool', 'search', 'query']:
+                        _recovered_action = _candidate
+                        app_logger.info(f"策略 B 命中 - 从自然语言提取 Action: {_recovered_action}")
+                if _recovered_action:
+                    llm_output = f"行动：{_recovered_action}\n行动输入：{{}}"
+                    app_logger.info(f"重构为标准格式: {llm_output[:200]}")
+                else:
+                    _after_think = llm_output.split('<antThinking', 1)[-1].split('<thinking', 1)[-1].strip()
+                    if _after_think and '<antThinking' not in _after_think and '<thinking' not in _after_think and len(_after_think) > 5:
+                        llm_output = _after_think
+                        app_logger.info(f"策略 C 命中 - 提取思考标签后的内容，长度：{len(llm_output)}")
+                    else:
+                        app_logger.info(f"所有策略均失败，返回截断提示")
+                        interrupted_message = (
+                            "抱歉，模型推理过程被中断，请重新提问。"
+                            if self.is_chinese
+                            else "Sorry, the model reasoning was interrupted. Please try again."
+                        )
+                        return AgentFinish(
+                            return_values={"output": interrupted_message},
+                            log=llm_output,
+                        )
+        elif '<antThinking' in llm_output or '<thinking' in llm_output:
+            # 只有思考开始标签没有结束标签，说明思考内容被截断
+            app_logger.info(f"\n⚠️ 检测到未闭合思考标签（思考被截断），尝试恢复 Action/Answer")
+            _inner_action_match = re.search(
                 r'(?:行动|Action)\s*[：:]\s*([a-zA-Z_][a-zA-Z0-9_]*)',
-                llm_output,
-                re.IGNORECASE
+                llm_output, re.IGNORECASE
             )
-
-            # 策略 B: 在 thinking 块中匹配"我应该使用 xxx 工具" / "调用 xxx" 等自然语言 Action
-            natural_action_match = re.search(
+            _natural_action_match = re.search(
                 r'(?:我应该使用|调用|使用|选择)\s*([a-zA-Z_][a-zA-Z0-9_]*)',
                 llm_output
             )
-
-            recovered_action = None
-            if inner_action_match:
-                recovered_action = inner_action_match.group(1).strip()
-                app_logger.info(f"策略 A 命中 - 从 thinking 块提取 Action: {recovered_action}")
-            elif natural_action_match:
-                candidate = natural_action_match.group(1).strip()
-                # 验证是否是已知工具名（包含 _request 或常见关键字）
-                if '_request' in candidate or candidate in ['tool', 'search', 'query']:
-                    recovered_action = candidate
-                    app_logger.info(f"策略 B 命中 - 从自然语言提取 Action: {recovered_action}")
-
-            if recovered_action:
-                # 重构为标准 ReAct 格式，强制工具名+空参数（让 Agent 重新生成参数）
-                llm_output = f"行动：{recovered_action}\n行动输入：{{}}"
+            _recovered_action = None
+            if _inner_action_match:
+                _recovered_action = _inner_action_match.group(1).strip()
+                app_logger.info(f"策略 A 命中 - 从 thinking 块提取 Action: {_recovered_action}")
+            elif _natural_action_match:
+                _candidate = _natural_action_match.group(1).strip()
+                if '_request' in _candidate or _candidate in ['tool', 'search', 'query']:
+                    _recovered_action = _candidate
+                    app_logger.info(f"策略 B 命中 - 从自然语言提取 Action: {_recovered_action}")
+            if _recovered_action:
+                llm_output = f"行动：{_recovered_action}\n行动输入：{{}}"
                 app_logger.info(f"重构为标准格式: {llm_output[:200]}")
             else:
-                # 策略 C: 取 <think> 之后的内容
-                after_think = llm_output.split('<think>', 1)[-1].strip()
-                if after_think and '<think>' not in after_think and len(after_think) > 5:
-                    llm_output = after_think
-                    app_logger.info(f"策略 C 命中 - 提取 <think> 之后的内容，长度：{len(llm_output)}")
+                _after_think = llm_output.split('<antThinking', 1)[-1].split('<thinking', 1)[-1].strip()
+                if _after_think and '<antThinking' not in _after_think and '<thinking' not in _after_think and len(_after_think) > 5:
+                    llm_output = _after_think
+                    app_logger.info(f"策略 C 命中 - 提取思考标签后的内容，长度：{len(llm_output)}")
                 else:
-                    # 完全无法提取任何内容
                     app_logger.info(f"所有策略均失败，返回截断提示")
                     interrupted_message = (
                         "抱歉，模型推理过程被中断，请重新提问。"

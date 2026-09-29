@@ -367,10 +367,12 @@ def generate_ppl_by_llm(
             if match:
                 raw_content = match.group(1).strip()
         
-        # 移除思考标签（）
-        ppl_query = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL | re.IGNORECASE)
+        # 移除思考标签（支持 <antThinking>...</antThinking> 和 <thinking>...</thinking>）
+        ppl_query = re.sub(r'<antThinking>.*?</antThinking>', '', raw_content, flags=re.DOTALL | re.IGNORECASE)
+        ppl_query = re.sub(r'<thinking>.*?</thinking>', '', ppl_query, flags=re.DOTALL | re.IGNORECASE)
         # 如果还有未闭合的标签，也清理掉
-        ppl_query = re.sub(r'<think>.*', '', ppl_query, flags=re.DOTALL)
+        ppl_query = re.sub(r'<antThinking>.*', '', ppl_query, flags=re.DOTALL | re.IGNORECASE)
+        ppl_query = re.sub(r'<thinking>.*', '', ppl_query, flags=re.DOTALL)
         ppl_query = ppl_query.strip()
         
         # 【关键修复】LLM 返回空 PPL 时，使用默认查询回退
