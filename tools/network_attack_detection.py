@@ -15,7 +15,7 @@
 【IP 溯源功能】
 - 网络攻击检测完成后，自动提取攻击源 IP（srcip）
 - 按累计占比≥80% 原则选取最多 5 个 IP
-- 对每个 IP 查询前 30 分钟的完整活动链路
+- 对每个 IP 查询完整事件范围前后各 30 分钟的活动链路
 """
 import json
 import logging
@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig, calculate_ip_stats
 from tools.index_config import INDEX_SOURCE_PATTERN
 from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
-from tools.ip_trace import ip_trace_request, build_trace_window
+from tools.ip_trace import ip_trace_request, build_trace_window_range, is_full_day_range
 
 logger = logging.getLogger(__name__)
 
@@ -110,36 +110,43 @@ def _calculate_ip_priority(raw_result: dict) -> list:
         return []
 
 
-def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str:
-    """提取指定 IP 的最早网络攻击时间（UTC → CST 转换）"""
+def _get_ip_attack_time_range(raw_result: dict, target_ip: str) -> tuple[str, str]:
+    """提取指定 IP 的最早和最晚网络攻击时间（UTC → CST 转换）。"""
     try:
         data = raw_result.get("data", [])
         if not data:
-            return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            return now, now
 
-        ip_first_time = None
+        timestamps = []
         for record in data:
             ip = record.get("source.ip") or record.get("srcip")
             if ip == target_ip:
                 t = record.get("@timestamp")
                 if t:
-                    ip_first_time = t
+                    timestamps.append(_utc_to_cst(t))
 
-        if ip_first_time:
-            # 【修复】ES 返回的是 UTC 时间，需转换为 CST 供后续链路使用
-            cst_time = _utc_to_cst(ip_first_time)
-            logger.info(f"[NetworkTrace] IP {target_ip} 的最早攻击时间（UTC→CST）: {ip_first_time} → {cst_time}")
-            return cst_time
+        if timestamps:
+            first_time, last_time = min(timestamps), max(timestamps)
+            logger.info(f"[NetworkTrace] IP {target_ip} 的攻击时间范围（UTC→CST）: {first_time} ~ {last_time}")
+            return first_time, last_time
 
         logger.warning(f"[NetworkTrace] IP {target_ip} 未找到记录，回退到全局时间")
         first_record = data[-1] if data else {}
         raw_ts = first_record.get("@timestamp", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         if raw_ts and raw_ts != datetime.now().strftime('%Y-%m-%d %H:%M:%S'):
-            return _utc_to_cst(raw_ts)
-        return raw_ts
+            fallback = _utc_to_cst(raw_ts)
+            return fallback, fallback
+        return raw_ts, raw_ts
     except Exception as e:
         logger.error(f"[NetworkTrace] 提取时间失败: {e}", exc_info=True)
-        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        return now, now
+
+
+def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str:
+    """Backward-compatible wrapper returning the earliest attack time."""
+    return _get_ip_attack_time_range(raw_result, target_ip)[0]
 
 
 def _auto_trace_network_attack_ips(raw_result: dict, start_time: str, end_time: str, gid: str) -> dict:
@@ -157,8 +164,13 @@ def _auto_trace_network_attack_ips(raw_result: dict, start_time: str, end_time: 
         
         for ip in trace_ips:
             try:
-                ip_first_time = _get_ip_first_attack_time(raw_result, ip)
-                ip_window = build_trace_window(ip_first_time, pre_minutes=30)
+                if is_full_day_range(start_time, end_time):
+                    ip_window = {"start_time": start_time, "end_time": end_time}
+                else:
+                    ip_first_time, ip_last_time = _get_ip_attack_time_range(raw_result, ip)
+                    ip_window = build_trace_window_range(
+                        ip_first_time, ip_last_time, pre_minutes=30, post_minutes=30
+                    )
                 logger.info(f"[NetworkTrace] 正在溯源 IP: {ip}，时间窗口：{ip_window['start_time']} ~ {ip_window['end_time']}")
                 
                 trace_result = ip_trace_request(

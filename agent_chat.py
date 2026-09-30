@@ -51,6 +51,10 @@ from config import (
     LLM_TEMPERATURE,
 )
 
+# Final answers and tool-selection actions do not need a large completion
+# budget. A hard cap also leaves room for large but compacted observations.
+AGENT_OUTPUT_TOKEN_CAP = 8192
+
 # ========================================
 # 日志配置：使用 QueueHandler + QueueListener 确保并发安全
 # ========================================
@@ -155,7 +159,7 @@ prompts = {
         ),
         "format_prompt": (
             "【输出格式硬性要求】先使用 <think>...</think> 标签输出思考过程，然后按指定格式输出。"
-            "你必须：1）用 <antThinking> 标签包裹思考过程；2）思考后输出行动。"
+            "你必须：1）用 <think> 标签包裹思考过程；2）思考后输出行动。"
             "你是一位智能的网络安全分析助手，可以根据用户问题自主选择工具。"
             "【重要说明】如果问题是通用问答、自我介绍、闲聊等不需要查询日志的情况，直接输出最终答案，无需调用工具！"
             "【语言要求】根据用户问题的语言自动选择回复语言：如果用户用中文提问，用中文回答；如果用户用英文提问，用英文回答。思考过程和最终答案必须使用与用户问题相同的语言！"
@@ -193,8 +197,8 @@ prompts = {
             "- filter_user: 只有用户明确提到用户名时才填用户名，否则填 None\n"
             "- aggregate: 仅当用户明确问'哪个最多/排名第一/top 1/排名'时填 True，否则填 False\n"
             "- group_by: 仅在 aggregate=True 时使用，默认'srcip'\n"
-            "- gid: 可选，设备组 ID，当用户明确提到特定设备组或防火墙设备时才传入 gid 参数\n"
-            "- user_problem: 直接复制用户问题原文\n\n"
+            "- gid: 可选，设备组 ID，当用户明确提到特定设备组或防火墙设备时才传入 gid 参数；必须逐字复制用户原文中的数字，不得删减或改写（例如 19936 不能写成 1936）\n"
+            "- user_problem: 必须逐字复制用户问题原文，不能改写、摘要、补充或省略任何数字\n\n"
             "【防幻觉规则 - 最重要】\n"
             "- 【关键】所有统计数字必须来自工具返回的 compression.summary_text 或 data 字段，绝不凭空编造数字\n"
             "- 【关键】时间线只能列出工具明确返回的 Top 3 攻击源 IP（不足 3 个就显示有几个就显示几个，不要凑数）。对于未在工具数据中出现的 IP、时间戳、用户名，禁止在时间线中凭空生成！\n"
@@ -576,7 +580,18 @@ async def chat_agent_stream(request: Request):
         MODEL_MAX_TOKENS = LLM_MAX_CONTEXT_TOKENS
         SAFETY_MARGIN = LLM_SAFETY_MARGIN
         MIN_OUTPUT_TOKENS = LLM_MIN_OUTPUT_TOKENS
-        MAX_OUTPUT_TOKENS = LLM_MAX_OUTPUT_TOKENS
+        MAX_OUTPUT_TOKENS = min(LLM_MAX_OUTPUT_TOKENS, AGENT_OUTPUT_TOKEN_CAP)
+
+        def _safe_output_budget(prompt_tokens: int) -> int:
+            """Never request more tokens than the provider context can hold."""
+            available = MODEL_MAX_TOKENS - prompt_tokens - SAFETY_MARGIN
+            if available <= 0:
+                app_logger.warning(
+                    "[Token Budget] prompt already consumes the context window: %s tokens",
+                    prompt_tokens,
+                )
+                return 1
+            return min(MAX_OUTPUT_TOKENS, available)
         
         # 构建完整 prompt 估算总长度
         try:
@@ -590,11 +605,9 @@ async def chat_agent_stream(request: Request):
             prompt_tokens = _estimate_tokens(prompt_text)
             app_logger.info(f"[Token Budget] 初始 prompt tokens: {prompt_tokens}")
             
-            # 动态计算 max_tokens：确保 total_tokens <= MODEL_MAX_TOKENS
-            # 预留额外余量：Agent 多轮迭代后 prompt 还会变长
-            max_tokens = MODEL_MAX_TOKENS - prompt_tokens - SAFETY_MARGIN * 2
-            max_tokens = max(max_tokens, MIN_OUTPUT_TOKENS)
-            max_tokens = min(max_tokens, MAX_OUTPUT_TOKENS)  # 上限保护
+            # 动态计算 max_tokens：确保 total_tokens <= MODEL_MAX_TOKENS。
+            # 工具 Observation 在后续轮次会被压缩，且模型输出有硬上限。
+            max_tokens = _safe_output_budget(prompt_tokens)
             
             # 如果 prompt 太长，逐步缩减历史记忆 k 值
             if max_tokens < MIN_OUTPUT_TOKENS:
@@ -607,9 +620,7 @@ async def chat_agent_stream(request: Request):
                         history=user_sessions[session_id].load_memory_variables({}).get("history", "")
                     )
                     prompt_tokens = _estimate_tokens(prompt_text)
-                    max_tokens = MODEL_MAX_TOKENS - prompt_tokens - SAFETY_MARGIN * 2
-                    max_tokens = max(max_tokens, MIN_OUTPUT_TOKENS)
-                    max_tokens = min(max_tokens, MAX_OUTPUT_TOKENS)
+                    max_tokens = _safe_output_budget(prompt_tokens)
                     if max_tokens >= MIN_OUTPUT_TOKENS:
                         app_logger.info(f"[Token Budget] 历史 k: {original_k} → {k}，prompt tokens: {prompt_tokens}，max_tokens: {max_tokens}")
                         break
@@ -618,9 +629,14 @@ async def chat_agent_stream(request: Request):
                 
         except Exception as e:
             app_logger.info(f"[Token Budget] Token 估算失败，使用默认值：{e}")
-            max_tokens = min(LLM_MAX_OUTPUT_TOKENS, 15000)
+            max_tokens = min(LLM_MAX_OUTPUT_TOKENS, AGENT_OUTPUT_TOKEN_CAP)
         
-        # app_logger.info(f"[Token Budget] 最终 max_tokens = {max_tokens}")
+        app_logger.info(
+            "[Token Budget] final max_tokens=%s, context_limit=%s, output_cap=%s",
+            max_tokens,
+            MODEL_MAX_TOKENS,
+            MAX_OUTPUT_TOKENS,
+        )
         
         # 初始化模型（使用动态计算的 max_tokens）
         model = ChatOpenAI(
@@ -647,7 +663,10 @@ async def chat_agent_stream(request: Request):
         llm_chain = LLMChain(llm=model, prompt=prompt_template_agent)
 
         # 7. 实例化输出解析器（无状态，可复用，但为一致性仍独立创建）
-        output_parser = CustomOutputParser(is_chinese=is_chinese_input)
+        output_parser = CustomOutputParser(
+            is_chinese=is_chinese_input,
+            original_user_input=user_input,
+        )
 
         # 8. 初始化Agent：使用当前请求的独立工具名列表
         agent = LLMSingleActionAgent(
@@ -813,8 +832,6 @@ async def chat_agent_stream(request: Request):
                                     latest_graph_data = trace_info.get("graph_data")
                                 elif isinstance(ip_details, list) and ip_details:
                                     # brute_force 自动溯源场景：从 ip_details 中提取每个 IP 的 graph_data
-                                    all_nodes = []
-                                    all_edges = []
                                     all_render_lines = []
                                     ip_graph_count = 0
                                     for detail in ip_details:
@@ -826,91 +843,40 @@ async def chat_agent_stream(request: Request):
                                             if not ip_gd and detail.get("trace_info"):
                                                 ip_gd = detail.get("trace_info", {}).get("graph_data")
                                             
-                                            if isinstance(ip_gd, dict) and (ip_gd.get("nodes") or ip_gd.get("edges")):
-                                                all_nodes.extend(ip_gd.get("nodes", []))
-                                                all_edges.extend(ip_gd.get("edges", []))
+                                            if isinstance(ip_gd, dict) and ip_gd.get("render_lines"):
                                                 all_render_lines.extend(
                                                     line for line in ip_gd.get("render_lines", [])
                                                     if isinstance(line, dict)
                                                 )
                                                 ip_graph_count += 1
                                     
-                                    if all_nodes or all_edges:
-                                        # 合并节点，并按状态优先级保留更严重状态。
-                                        status_priority = {"": 0, "success": 1, "failed": 2, "blocked": 3}
-                                        nodes_by_id = {}
-                                        for node in all_nodes:
-                                            nid = node.get("id", node.get("name", ""))
-                                            if nid not in nodes_by_id:
-                                                nodes_by_id[nid] = dict(node)
-                                                continue
-                                            current = nodes_by_id[nid]
-                                            current_status = current.get("status", "")
-                                            new_status = node.get("status", "")
-                                            if status_priority.get(new_status, 0) > status_priority.get(current_status, 0):
-                                                current["status"] = new_status
-                                            for field in ("first_seen", "last_seen"):
-                                                incoming = node.get(field, "")
-                                                existing = current.get(field, "")
-                                                if incoming and (not existing or (field == "first_seen" and incoming < existing) or (field == "last_seen" and incoming > existing)):
-                                                    current[field] = incoming
-                                        merged_nodes = list(nodes_by_id.values())
-
-                                        # 合并边时必须包含 relation，且状态不能被先到的成功事件覆盖。
-                                        edge_by_key = {}
-                                        for edge in all_edges:
-                                            ekey = (
-                                                edge.get("source", ""),
-                                                edge.get("target", ""),
-                                                edge.get("relation", ""),
-                                            )
-                                            if ekey not in edge_by_key:
-                                                edge_by_key[ekey] = dict(edge)
-                                                continue
-                                            current = edge_by_key[ekey]
-                                            current_status = current.get("edge_status", "")
-                                            new_status = edge.get("edge_status", "")
-                                            if status_priority.get(new_status, 0) > status_priority.get(current_status, 0):
-                                                current["edge_status"] = new_status
-                                            incoming_ts = edge.get("timestamp", "")
-                                            existing_ts = current.get("timestamp", "")
-                                            if incoming_ts and (not existing_ts or incoming_ts < existing_ts):
-                                                current["timestamp"] = incoming_ts
-                                        merged_edges = list(edge_by_key.values())
-                                        
-                                        combined_graph_data = {
-                                            "nodes": merged_nodes,
-                                            "edges": merged_edges,
-                                            "render_lines": [],
-                                            "stats": {
-                                                "node_count": len(merged_nodes),
-                                                "edge_count": len(merged_edges),
-                                                "ip_count": ip_graph_count,
-                                                "type_distribution": {}
-                                            }
-                                        }
-                                        # 合并各 IP 的 type_distribution
-                                        for detail in ip_details:
-                                            if isinstance(detail, dict):
-                                                # 同样处理两种结构
-                                                gd = detail.get("graph_data", {})
-                                                if not gd: gd = detail.get("trace_info", {}).get("graph_data", {})
-                                                
-                                                ip_stats = gd.get("stats", {})
-                                                ip_dist = ip_stats.get("type_distribution", {})
-                                                for k, v in ip_dist.items():
-                                                    combined_graph_data["stats"]["type_distribution"][k] = combined_graph_data["stats"]["type_distribution"].get(k, 0) + v
-
-                                        # Keep the ordered lane paths alongside the
-                                        # legacy merged nodes/edges graph.
+                                    if all_render_lines:
                                         render_by_id = {}
                                         for line in all_render_lines:
                                             line_id = line.get("line_id")
-                                            if line_id and line_id not in render_by_id:
-                                                render_by_id[line_id] = line
-                                        combined_graph_data["render_lines"] = list(render_by_id.values())
-                                        
-                                        # app_logger.info(f"[DEBUG] Extracted graph_data: nodes={len(merged_nodes)}, edges={len(merged_edges)}")
+                                            if not line_id:
+                                                continue
+                                            if line_id not in render_by_id:
+                                                render_by_id[line_id] = dict(line)
+                                                continue
+                                            current = render_by_id[line_id]
+                                            current["count"] = int(current.get("count", 0) or 0) + int(line.get("count", 0) or 0)
+                                            for field in ("first_seen", "last_seen"):
+                                                incoming = line.get(field, "")
+                                                existing = current.get(field, "")
+                                                if incoming and (not existing or (field == "first_seen" and incoming < existing) or (field == "last_seen" and incoming > existing)):
+                                                    current[field] = incoming
+                                        merged_lines = list(render_by_id.values())
+                                        combined_graph_data = {
+                                            "render_lines": merged_lines,
+                                            "stats": {
+                                                "event_count": sum(int(line.get("count", 0) or 0) for line in merged_lines),
+                                                "line_count": len(merged_lines),
+                                                "upper_line_count": sum(1 for line in merged_lines if line.get("direction") == "upper"),
+                                                "lower_line_count": sum(1 for line in merged_lines if line.get("direction") == "lower"),
+                                                "ip_count": ip_graph_count,
+                                            },
+                                        }
                                         latest_graph_data = combined_graph_data
                                     else:
                                         latest_graph_data = None

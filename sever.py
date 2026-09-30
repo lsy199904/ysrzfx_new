@@ -181,7 +181,10 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
                 # 【修复】即使 graph_data 为空字典，也要记录，因为可能是查询结果为空
                 graph_data = trace_info.get("graph_data")
                 if graph_data:
-                    app_logger.info(f"[sever.py] 从 trace_info.graph_data 提取，nodes={len(graph_data.get('nodes', []))}, edges={len(graph_data.get('edges', []))}")
+                    app_logger.info(
+                        "[sever.py] 从 trace_info.graph_data 提取，"
+                        f"render_lines={len(graph_data.get('render_lines', []))}"
+                    )
                 else:
                     app_logger.warning(f"[sever.py] trace_info.graph_data 为空，trace_info keys: {list(trace_info.keys())}")
             # 兼容嵌套结构：从 trace_info.ip_details[0].graph_data 提取
@@ -382,10 +385,19 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
                 app_logger.info(f"\nLLM 生成文本总长度：{len(full_text)}")
                 
                 # 检查是否包含思考标签
-                has_thought_start = '<antThinking' in full_text or '<thinking' in full_text
-                has_thought_end = '</antThinking>' in full_text or '</thinking>' in full_text or '<antThinking/>' in full_text
-                app_logger.info(f"  - 包含思考开始标签（<antThinking>|<thinking>）：{has_thought_start}")
-                app_logger.info(f"  - 包含思考结束标签（</antThinking>|</thinking>|<antThinking/>）：{has_thought_end}")
+                has_thought_start = (
+                    '<think>' in full_text
+                    or '<antThinking' in full_text
+                    or '<thinking' in full_text
+                )
+                has_thought_end = (
+                    '</think>' in full_text
+                    or '</antThinking>' in full_text
+                    or '</thinking>' in full_text
+                    or '<antThinking/>' in full_text
+                )
+                app_logger.info(f"  - 包含思考开始标签（<think>|<antThinking>|<thinking>）：{has_thought_start}")
+                app_logger.info(f"  - 包含思考结束标签（</think>|</antThinking>|</thinking>|<antThinking/>）：{has_thought_end}")
                 
                 if has_thought_start and not has_thought_end:
                     app_logger.info(f"  ⚠️ 警告：发现未闭合思考标签，模型思考被截断！")

@@ -15,7 +15,7 @@
 【IP 溯源功能】
 - 账户安全事件完成后，自动提取操作者 IP（uiscrip）
 - 按累计占比≥80% 原则选取最多 5 个 IP
-- 对每个 IP 查询前 30 分钟的完整活动链路
+- 对每个 IP 查询完整事件范围前后各 30 分钟的活动链路
 """
 import json
 import logging
@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig, calculate_ip_stats
 from tools.index_config import INDEX_SOURCE_PATTERN
 from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
-from tools.ip_trace import ip_trace_request, build_trace_window
+from tools.ip_trace import ip_trace_request, build_trace_window_range, is_full_day_range
 
 logger = logging.getLogger(__name__)
 
@@ -90,31 +90,40 @@ def _calculate_ip_priority(raw_result: dict) -> list:
         return []
 
 
-def _get_ip_first_event_time(raw_result: dict, target_ip: str) -> str:
-    """提取指定 IP 的最早账户安全事件时间"""
+def _get_ip_event_time_range(raw_result: dict, target_ip: str) -> tuple[str, str]:
+    """提取指定 IP 的最早和最晚账户安全事件时间。"""
     try:
         data = raw_result.get("data", [])
         if not data:
-            return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        ip_first_time = None
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            return now, now
+
+        timestamps = []
         for record in data:
             ip = record.get("uiscrip") or record.get("source.ip") or record.get("srcip")
             if ip == target_ip:
                 t = record.get("@timestamp")
                 if t:
-                    ip_first_time = t
-        
-        if ip_first_time:
-            logger.info(f"[AccountTrace] IP {target_ip} 的最早事件时间: {ip_first_time}")
-            return ip_first_time
-        
+                    timestamps.append(str(t))
+
+        if timestamps:
+            first_time, last_time = min(timestamps), max(timestamps)
+            logger.info(f"[AccountTrace] IP {target_ip} 的事件时间范围: {first_time} ~ {last_time}")
+            return first_time, last_time
+
         logger.warning(f"[AccountTrace] IP {target_ip} 未找到记录，回退到全局时间")
         first_record = data[-1] if data else {}
-        return first_record.get("@timestamp", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        fallback = first_record.get("@timestamp", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        return fallback, fallback
     except Exception as e:
         logger.error(f"[AccountTrace] 提取时间失败: {e}", exc_info=True)
-        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        return now, now
+
+
+def _get_ip_first_event_time(raw_result: dict, target_ip: str) -> str:
+    """Backward-compatible wrapper returning the earliest event time."""
+    return _get_ip_event_time_range(raw_result, target_ip)[0]
 
 
 def _auto_trace_account_security_ips(raw_result: dict, start_time: str, end_time: str, gid: str) -> dict:
@@ -132,8 +141,13 @@ def _auto_trace_account_security_ips(raw_result: dict, start_time: str, end_time
         
         for ip in trace_ips:
             try:
-                ip_first_time = _get_ip_first_event_time(raw_result, ip)
-                ip_window = build_trace_window(ip_first_time, pre_minutes=30)
+                if is_full_day_range(start_time, end_time):
+                    ip_window = {"start_time": start_time, "end_time": end_time}
+                else:
+                    ip_first_time, ip_last_time = _get_ip_event_time_range(raw_result, ip)
+                    ip_window = build_trace_window_range(
+                        ip_first_time, ip_last_time, pre_minutes=30, post_minutes=30
+                    )
                 logger.info(f"[AccountTrace] 正在溯源 IP: {ip}，时间窗口：{ip_window['start_time']} ~ {ip_window['end_time']}")
                 
                 trace_result = ip_trace_request(

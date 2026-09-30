@@ -17,7 +17,7 @@
 【IP 溯源功能】
 - 暴力破解检测完成后，自动提取攻击源 IP
 - 按累计占比≥80% 原则选取最多 5 个 IP
-- 对每个 IP 查询前 5 分钟的完整活动链路
+- 对每个 IP 查询完整事件范围前后各 30 分钟的活动链路
 """
 import json
 import logging
@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig, calculate_ip_stats
 from tools.index_config import INDEX_SOURCE_PATTERN
 from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
-from tools.ip_trace import ip_trace_request, build_trace_window_range
+from tools.ip_trace import ip_trace_request, build_trace_window_range, is_full_day_range
 
 
 def _normalize_attack_time(timestamp_str: str) -> str:
@@ -231,13 +231,16 @@ def _auto_trace_brute_force_ips(raw_result: dict, start_time: str, end_time: str
             try:
                 # 覆盖最早攻击前 30 分钟至最晚攻击后 30 分钟，避免
                 # 漏掉同一 IP 在当天后续发生的攻击、锁定或拦截记录。
-                ip_first_time, ip_last_time = _get_ip_attack_time_range(raw_result, ip)
-                ip_window = build_trace_window_range(
-                    ip_first_time,
-                    ip_last_time,
-                    pre_minutes=30,
-                    post_minutes=30,
-                )
+                if is_full_day_range(start_time, end_time):
+                    ip_window = {"start_time": start_time, "end_time": end_time}
+                else:
+                    ip_first_time, ip_last_time = _get_ip_attack_time_range(raw_result, ip)
+                    ip_window = build_trace_window_range(
+                        ip_first_time,
+                        ip_last_time,
+                        pre_minutes=30,
+                        post_minutes=30,
+                    )
                 logger.info(f"[Trace] 正在溯源 IP: {ip}，时间窗口：{ip_window['start_time']} ~ {ip_window['end_time']}")
 
                 trace_result = ip_trace_request(

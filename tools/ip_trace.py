@@ -142,22 +142,11 @@ def _type_to_category(type_str: str) -> int:
 
 
 def _parse_action_name(action: str) -> str:
-    """从 action 字段解析友好的动作名称"""
-    action_map = {
-        "accept": "允许",
-        "deny": "拒绝",
-        "blocked": "阻断",
-        "pass": "通过",
-        "log": "记录",
-        "login": "登录",
-        "logout": "登出",
-        "delete": "删除",
-        "create": "创建",
-        "update": "更新",
-        "modify": "修改",
-    }
-    action_lower = action.lower() if action else ""
-    return action_map.get(action_lower, action or "未知动作")
+    """Return the original English action value."""
+    if action is None:
+        return ""
+    value = str(action).strip()
+    return value or "unknown_action"
 
 
 def _parse_msg_info(msg: str) -> dict:
@@ -493,6 +482,26 @@ def _render_line_safe_part(value: str) -> str:
     return value or "unknown"
 
 
+def _render_line_timestamp(value: str) -> str:
+    """Normalize timestamps for the compact frontend contract."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
+    ):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    return text
+
+
 def _build_render_lines(records: list) -> list:
     """Build compact, ordered paths for a frontend two-lane renderer.
 
@@ -514,20 +523,26 @@ def _build_render_lines(records: list) -> list:
         policy_id = _get_field(record, ["rule.id", "policyid"])
         policy_name = _get_field(record, ["rule.name", "policyname"])
         destination_port = _get_field(record, ["destination.port", "dstport"])
-        timestamp = record.get("@timestamp", "") or ""
+        timestamp = _render_line_timestamp(record.get("@timestamp", "") or "")
 
         valid_user = user not in ("", "-", "None", "null", "nan", "N/A")
         direction = "upper" if valid_user else "lower"
-        render_action = action
+        render_action = _parse_action_name(action)
         if direction == "lower" and action.strip().lower() in ("accept", "accepted", "allow", "allowed", "pass", "passed"):
             render_action = "traffic"
         status = _render_line_status(record, direction)
 
-        if direction == "upper":
-            base_parts = ["upper", user, render_action, subtype]
-        else:
-            base_parts = ["lower", render_action or subtype or "traffic", destination_port]
-        base_id = "-".join(_render_line_safe_part(part) for part in base_parts if part)
+        line_identity_parts = [
+            direction,
+            attacker,
+            user if valid_user else target_ip,
+            render_action,
+            subtype,
+            destination_port,
+            policy_id,
+            status,
+        ]
+        base_id = "-".join(_render_line_safe_part(part) for part in line_identity_parts)
 
         steps = []
         if attacker:
@@ -554,6 +569,7 @@ def _build_render_lines(records: list) -> list:
             subtype,
             oss,
             str(policy_id),
+            str(policy_name),
             str(destination_port),
             status,
         )
@@ -581,25 +597,28 @@ def _build_render_lines(records: list) -> list:
                     line["details"]["destination_port"] = int(destination_port)
                 except (TypeError, ValueError):
                     line["details"]["destination_port"] = destination_port
-
-    # Add a status suffix only when one path has multiple statuses. This keeps
-    # ids concise for ordinary paths while avoiding collisions for success/
-    # failed variants of the same user/action chain.
-    status_counts = {}
-    for line in grouped.values():
-        status_counts.setdefault(line["base_id"], set()).add(line["status"])
+        if policy_id:
+            line["details"]["rule_id"] = policy_id
+        if policy_name:
+            line["details"]["rule_name"] = policy_name
+        message = _get_field(record, ["message", "msg"])
+        if message:
+            line["details"]["message"] = message
 
     render_lines = []
     used_ids = set()
     for line in grouped.values():
         line_id = line["base_id"]
-        if len(status_counts.get(line_id, set())) > 1:
-            line_id = f"{line_id}-{_render_line_safe_part(line['status'])}"
         if line_id in used_ids:
-            # Different attackers can share the same visible path. Keep the
-            # id deterministic without changing the displayed steps.
-            attacker = next((step["name"] for step in line["steps"] if step["type"] == "attacker"), "")
-            line_id = f"{line_id}-{_render_line_safe_part(attacker)}"
+            # The complete aggregation key should already make IDs unique;
+            # retain a deterministic suffix for malformed records with the
+            # same normalized identity.
+            suffix = 2
+            candidate = f"{line_id}-{suffix}"
+            while candidate in used_ids:
+                suffix += 1
+                candidate = f"{line_id}-{suffix}"
+            line_id = candidate
         used_ids.add(line_id)
 
         output = {
@@ -1040,34 +1059,31 @@ def build_graph_data(raw_data: dict) -> dict:
 
 
 def compact_graph_data(graph_data: dict) -> dict:
-    """Keep the stable drawing contract while removing analysis-only payload."""
+    """Expose only the render-line contract to the frontend."""
     if not isinstance(graph_data, dict):
-        return {"nodes": [], "edges": [], "stats": {}, "render_lines": []}
+        return {"render_lines": [], "stats": {}}
 
-    node_fields = (
-        "id", "name", "type", "category", "symbolSize", "value",
-        "color", "symbol", "status", "first_seen", "last_seen",
+    render_lines = [
+        dict(line) for line in graph_data.get("render_lines", [])
+        if isinstance(line, dict)
+    ]
+    source_stats = graph_data.get("stats", {})
+    stats = dict(source_stats) if isinstance(source_stats, dict) else {}
+    stats.pop("node_count", None)
+    stats.pop("edge_count", None)
+    stats["event_count"] = sum(
+        int(line.get("count", 0) or 0) for line in render_lines
     )
-    edge_fields = ("source", "target", "relation", "timestamp", "edge_status")
-
-    nodes = [
-        {field: node[field] for field in node_fields if field in node}
-        for node in graph_data.get("nodes", [])
-        if isinstance(node, dict)
-    ]
-    edges = [
-        {field: edge[field] for field in edge_fields if field in edge}
-        for edge in graph_data.get("edges", [])
-        if isinstance(edge, dict)
-    ]
+    stats["line_count"] = len(render_lines)
+    stats["upper_line_count"] = sum(
+        1 for line in render_lines if line.get("direction") == "upper"
+    )
+    stats["lower_line_count"] = sum(
+        1 for line in render_lines if line.get("direction") == "lower"
+    )
     return {
-        "nodes": nodes,
-        "edges": edges,
-        "render_lines": [
-            dict(line) for line in graph_data.get("render_lines", [])
-            if isinstance(line, dict)
-        ],
-        "stats": graph_data.get("stats", {}),
+        "render_lines": render_lines,
+        "stats": stats,
     }
 
 
@@ -1210,6 +1226,22 @@ def build_trace_window_range(
     }
 
 
+def is_full_day_range(start_time: str, end_time: str) -> bool:
+    """Return whether the caller explicitly requested one complete calendar day."""
+    start = str(start_time or "").strip()
+    end = str(end_time or "").strip()
+    if not start or not end:
+        return False
+    start_date = start[:10]
+    end_date = end[:10]
+    if start_date != end_date:
+        return False
+    return (
+        start in {start_date, f"{start_date} 00:00:00", f"{start_date}T00:00:00"}
+        and end in {end_date, f"{end_date} 23:59:59", f"{end_date}T23:59:59"}
+    )
+
+
 def _build_trace_result(raw_result: str, ip: str, start_time: str, end_time: str) -> dict:
     """
     构造溯源结果的结构化格式
@@ -1236,7 +1268,10 @@ def _build_trace_result(raw_result: str, ip: str, start_time: str, end_time: str
             # 【修复】构建图前先清洗 NaN/Infinity
             raw_data = _sanitize_nan(raw_data)
             graph_data = compact_graph_data(build_graph_data(raw_data))
-            logger.info(f"[build_trace_result] graph_data 构建结果: nodes={len(graph_data.get('nodes', []))}, edges={len(graph_data.get('edges', []))}")
+            logger.info(
+                "[build_trace_result] graph_data 构建结果: "
+                f"render_lines={len(graph_data.get('render_lines', []))}"
+            )
         else:
             logger.warning(f"[build_trace_result] raw_data 为空或 data 字段缺失/为空")
     except Exception as e:

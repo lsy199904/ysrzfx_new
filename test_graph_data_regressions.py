@@ -33,7 +33,9 @@ from tools.brute_force import (
     _get_ip_first_attack_time,
     _normalize_attack_time,
 )
-from tools.ip_trace import build_trace_window_range
+from tools.account_security_monitor import _auto_trace_account_security_ips
+from tools.network_attack_detection import _auto_trace_network_attack_ips
+from tools.ip_trace import build_trace_window_range, compact_graph_data
 from tools.ip_trace import IP_TRACE_PPL_TEMPLATE, _build_trace_result, build_graph_data
 
 
@@ -88,7 +90,7 @@ class GraphDataRegressionTests(unittest.TestCase):
         trace_request.return_value = {
             "trace_info": {
                 "status": "success",
-                "time_window": "2026-03-26 10:05:12 ~ 2026-03-26 12:10:00",
+                "time_window": "2026-03-26 00:00:00 ~ 2026-03-26 23:59:59",
             }
         }
         result = _auto_trace_brute_force_ips(
@@ -105,8 +107,8 @@ class GraphDataRegressionTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         trace_request.assert_called_once_with(
             ip="10.180.120.160",
-            start_time="2026-03-26 10:05:12",
-            end_time="2026-03-26 12:10:00",
+            start_time="2026-03-26 00:00:00",
+            end_time="2026-03-26 23:59:59",
             gid=None,
         )
 
@@ -164,11 +166,10 @@ class GraphDataRegressionTests(unittest.TestCase):
         )
         graph = result["trace_info"]["graph_data"]
         self.assertEqual(result["trace_info"]["status"], "success")
-        self.assertGreater(len(graph["nodes"]), 0)
-        self.assertIn(
-            "device_GuZ_OFFICE_500E",
-            {node["id"] for node in graph["nodes"]},
-        )
+        self.assertNotIn("nodes", graph)
+        self.assertNotIn("edges", graph)
+        self.assertEqual(set(graph), {"render_lines", "stats"})
+        self.assertEqual(graph["stats"]["event_count"], 1)
 
     def test_current_field_mapping_restores_graph_chain_nodes(self):
         records = [
@@ -347,12 +348,12 @@ class GraphDataRegressionTests(unittest.TestCase):
         self.assertEqual(len(lower), 1)
         self.assertEqual(upper[0]["steps"][0], {"type": "attacker", "name": "10.180.120.160"})
         self.assertEqual(lower[0]["status"], "pass")
-        self.assertEqual(lower[0]["line_id"], "lower-traffic-443")
+        self.assertIn("lower-10-180-120-160-10-180-3-147-traffic-log-only-443-8-0-pass", lower[0]["line_id"])
         self.assertEqual(lower[0]["steps"][2], {"type": "action", "name": "traffic"})
-        self.assertEqual(lower[0]["details"], {
-            "destination_ip": "10.180.3.147",
-            "destination_port": 443,
-        })
+        self.assertEqual(lower[0]["details"]["destination_ip"], "10.180.3.147")
+        self.assertEqual(lower[0]["details"]["destination_port"], 443)
+        self.assertEqual(lower[0]["details"]["rule_id"], "8.0")
+        self.assertEqual(lower[0]["details"]["rule_name"], "Policy 8.0")
         self.assertEqual(lower[0]["steps"][-1], {"type": "policy", "name": "Policy 8.0"})
 
     def test_traffic_graph_connects_subtype_to_oss_and_derives_accept_status(self):
@@ -421,6 +422,96 @@ class GraphDataRegressionTests(unittest.TestCase):
             edges[("user_zhou_hui", "action_login", "performs_action")]["edge_status"],
             "failed",
         )
+
+    def test_compact_graph_data_exposes_only_render_lines_and_stats(self):
+        compacted = compact_graph_data({
+            "nodes": [{"id": "n1"}],
+            "edges": [{"source": "n1", "target": "n2"}],
+            "render_lines": [
+                {"line_id": "upper-a", "direction": "upper", "count": 2},
+                {"line_id": "lower-b", "direction": "lower", "count": 1},
+            ],
+            "stats": {"node_count": 1, "edge_count": 1},
+        })
+        self.assertEqual(set(compacted), {"render_lines", "stats"})
+        self.assertEqual(compacted["stats"], {
+            "event_count": 3,
+            "line_count": 2,
+            "upper_line_count": 1,
+            "lower_line_count": 1,
+        })
+
+    def test_render_line_aggregation_keeps_status_port_and_target_distinct(self):
+        records = []
+        for status, port, target, timestamp in (
+            ("success", 443, "10.0.0.1", "2026-03-26 10:00:00"),
+            ("success", 443, "10.0.0.1", "2026-03-26 10:01:00"),
+            ("failed", 443, "10.0.0.1", "2026-03-26 10:02:00"),
+            ("success", 22, "10.0.0.1", "2026-03-26 10:03:00"),
+            ("success", 443, "10.0.0.2", "2026-03-26 10:04:00"),
+        ):
+            records.append({
+                "@timestamp": timestamp,
+                "attack_src": "10.0.0.9",
+                "destination.ip": target,
+                "destination.port": port,
+                "event.action": "accept",
+                "fortinet.firewall.subtype": "forward",
+                "fortinet.firewall.status": status,
+                "observer.name": "fw-1",
+                "rule.id": "8",
+                "rule.name": "Policy 8",
+            })
+        graph = build_graph_data({"data": records})
+        lines = graph["render_lines"]
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(sorted(line["count"] for line in lines), [1, 1, 1, 2])
+        self.assertEqual(len({line["line_id"] for line in lines}), 4)
+        merged = next(line for line in lines if line["count"] == 2)
+        self.assertEqual(merged["first_seen"], "2026-03-26 10:00:00")
+        self.assertEqual(merged["last_seen"], "2026-03-26 10:01:00")
+
+    @patch("tools.account_security_monitor.ip_trace_request")
+    def test_account_security_auto_trace_uses_each_ip_first_and_last(self, trace_request):
+        trace_request.side_effect = lambda ip, start_time, end_time, gid: {
+            "trace_info": {"ip": ip, "time_window": f"{start_time} ~ {end_time}"}
+        }
+        result = _auto_trace_account_security_ips(
+            {"data": [
+                {"uiscrip": "10.0.0.1", "@timestamp": "2026-03-26 10:00:00"},
+                {"uiscrip": "10.0.0.1", "@timestamp": "2026-03-26 11:00:00"},
+                {"uiscrip": "10.0.0.2", "@timestamp": "2026-03-26 12:00:00"},
+                {"uiscrip": "10.0.0.2", "@timestamp": "2026-03-26 13:00:00"},
+            ]},
+            start_time="2026-03-26 08:00:00",
+            end_time="2026-03-26 14:00:00",
+            gid="19936",
+        )
+        self.assertEqual(trace_request.call_count, 2)
+        windows = {(call.kwargs["ip"], call.kwargs["start_time"], call.kwargs["end_time"]) for call in trace_request.call_args_list}
+        self.assertIn(("10.0.0.1", "2026-03-26 09:30:00", "2026-03-26 11:30:00"), windows)
+        self.assertIn(("10.0.0.2", "2026-03-26 11:30:00", "2026-03-26 13:30:00"), windows)
+
+    @patch("tools.network_attack_detection.ip_trace_request")
+    def test_network_auto_trace_uses_each_ip_first_and_last(self, trace_request):
+        trace_request.side_effect = lambda ip, start_time, end_time, gid: {
+            "trace_info": {"ip": ip, "time_window": f"{start_time} ~ {end_time}"}
+        }
+        result = _auto_trace_network_attack_ips(
+            {"data": [
+                {"source.ip": "10.0.0.1", "@timestamp": "2026-03-26T02:00:00Z"},
+                {"source.ip": "10.0.0.1", "@timestamp": "2026-03-26T03:00:00Z"},
+                {"source.ip": "10.0.0.2", "@timestamp": "2026-03-26T04:00:00Z"},
+                {"source.ip": "10.0.0.2", "@timestamp": "2026-03-26T05:00:00Z"},
+            ]},
+            start_time="2026-03-26 00:00:00",
+            end_time="2026-03-26 06:00:00",
+            gid="19936",
+        )
+        self.assertEqual(trace_request.call_count, 2)
+        windows = {(call.kwargs["ip"], call.kwargs["start_time"], call.kwargs["end_time"]) for call in trace_request.call_args_list}
+        self.assertIn(("10.0.0.1", "2026-03-26 09:30:00", "2026-03-26 11:30:00"), windows)
+        self.assertIn(("10.0.0.2", "2026-03-26 11:30:00", "2026-03-26 13:30:00"), windows)
 
 
 if __name__ == "__main__":

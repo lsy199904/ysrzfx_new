@@ -10,6 +10,113 @@ from pydantic.schema import model_schema
 # 复用 agent_chat 模块中已配置好的 app_logger（单例）
 app_logger = logging.getLogger("agent_chat")
 
+_MAX_OBSERVATION_CHARS = 12000
+_MAX_OBSERVATION_FIELD_CHARS = 3000
+_DROP_OBSERVATION_KEYS = {"graph_data", "render_lines"}
+_DROPPED = object()
+
+
+def _truncate_observation_text(value: str, limit: int = _MAX_OBSERVATION_FIELD_CHARS) -> str:
+    """Keep both the beginning and end of a long tool field."""
+    if len(value) <= limit:
+        return value
+    head = max(1, int(limit * 0.75))
+    tail = max(1, limit - head)
+    return f"{value[:head]}\n...[truncated {len(value) - limit} chars]...\n{value[-tail:]}"
+
+
+def _compact_observation_value(value, key: str = "", depth: int = 0):
+    """Remove graph payloads and bound raw log fields before the next LLM call."""
+    if key in _DROP_OBSERVATION_KEYS:
+        return _DROPPED
+    if depth > 6:
+        return _truncate_observation_text(str(value)) if isinstance(value, str) else str(value)
+
+    if isinstance(value, dict):
+        compacted = {}
+        for child_key, child_value in value.items():
+            child = _compact_observation_value(child_value, str(child_key), depth + 1)
+            if child is not _DROPPED:
+                compacted[child_key] = child
+        return compacted
+
+    if isinstance(value, list):
+        # Raw data and per-IP trace details can be large; keep enough records
+        # for a useful summary while leaving the full payload available to SSE.
+        limit = 3 if key in {"data", "ip_details"} else 8
+        compacted = []
+        for item in value[:limit]:
+            child = _compact_observation_value(item, key, depth + 1)
+            if child is not _DROPPED:
+                compacted.append(child)
+        if len(value) > limit:
+            compacted.append({"__truncated_items__": len(value) - limit})
+        return compacted
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        # Trace activities are JSON strings nested inside the tool response.
+        if key in {"activities", "output_str"} and stripped[:1] in {"{", "["}:
+            try:
+                nested = json.loads(stripped)
+            except (TypeError, json.JSONDecodeError):
+                nested = None
+            if nested is not None:
+                return _compact_observation_value(nested, key, depth + 1)
+        return _truncate_observation_text(value)
+
+    return value
+
+
+def compact_observation_for_llm(observation: str) -> str:
+    """Bound a tool observation used in the ReAct scratchpad.
+
+    The callback still receives the original tool output, so graph data and
+    complete records remain available to the frontend. Only the copy sent
+    back to the model is compacted.
+    """
+    if not isinstance(observation, str) or not observation:
+        return observation
+
+    try:
+        parsed = json.loads(observation)
+    except (TypeError, json.JSONDecodeError):
+        compacted_text = _truncate_observation_text(observation, _MAX_OBSERVATION_CHARS)
+    else:
+        if isinstance(parsed, dict):
+            # Put summaries and query steps ahead of raw records.  This keeps
+            # the useful explanation when a response contains hundreds of
+            # records plus a large trace graph.
+            priority_keys = (
+                "steps", "ppl_query", "http_status", "error", "suggestion",
+                "count", "compression", "ip_stats", "trace_info", "status",
+                "message", "ip_count", "time_window",
+            )
+            projected = {
+                key: parsed[key]
+                for key in priority_keys
+                if key in parsed
+            }
+            compression = parsed.get("compression")
+            if not (isinstance(compression, dict) and compression.get("compressed")):
+                if "data" in parsed:
+                    projected["data"] = parsed["data"]
+            elif "data" in parsed:
+                projected["data_sample"] = parsed["data"][:3] if isinstance(parsed["data"], list) else parsed["data"]
+            compacted = _compact_observation_value(projected)
+        else:
+            compacted = _compact_observation_value(parsed)
+        compacted_text = json.dumps(compacted, ensure_ascii=False, separators=(",", ":"))
+        compacted_text = _truncate_observation_text(compacted_text, _MAX_OBSERVATION_CHARS)
+
+    if compacted_text != observation:
+        app_logger.info(
+            "[Prompt Budget] tool observation compacted: %s -> %s chars",
+            len(observation),
+            len(compacted_text),
+        )
+    return compacted_text
+
 
 class CustomPromptTemplate(StringPromptTemplate):
     """
@@ -22,8 +129,13 @@ class CustomPromptTemplate(StringPromptTemplate):
         intermediate_steps = kwargs.pop("intermediate_steps")
         thoughts = ""
         for action, observation in intermediate_steps:
-            thoughts += action.log
-            thoughts += f"\nObservation: {observation}\nThought: "
+            action_log = _truncate_observation_text(
+                getattr(action, "log", ""),
+                _MAX_OBSERVATION_FIELD_CHARS,
+            )
+            thoughts += action_log
+            compacted_observation = compact_observation_for_llm(observation)
+            thoughts += f"\nObservation: {compacted_observation}\nThought: "
         kwargs["agent_scratchpad"] = thoughts
 
         def _fetch_tool_input_schema(_tool):
@@ -56,6 +168,35 @@ class CustomOutputParser(AgentOutputParser):
     # AgentOutputParser 是 Pydantic 模型。必须声明为模型字段，不能在
     # __init__ 中直接赋值，否则生产环境会因未声明字段中断 SSE 响应。
     is_chinese: bool = True
+    # Request-owned text is authoritative for query scope. The model may not
+    # rewrite identifiers such as gid while producing an Action.
+    original_user_input: str = ""
+
+    def _canonicalize_action_input(self, action_input: dict, tool: str) -> dict:
+        """Prevent model output from changing the request's query scope."""
+        if not self.original_user_input or not isinstance(action_input, dict):
+            return action_input
+
+        from tools.request_input_guard import canonicalize_action_input
+
+        normalized, changes = canonicalize_action_input(
+            action_input,
+            self.original_user_input,
+        )
+        if changes:
+            app_logger.warning(
+                "[REQUEST_INPUT_GUARD] corrected tool=%s fields=%s",
+                tool,
+                list(changes.keys()),
+            )
+            for field, (model_value, source_value) in changes.items():
+                app_logger.warning(
+                    "[REQUEST_INPUT_GUARD] %s: model=%r, request=%r",
+                    field,
+                    model_value,
+                    source_value,
+                )
+        return normalized
 
     def parse(self, llm_output: str) -> AgentFinish | tuple[dict[str, str], str] | AgentAction:
         """
@@ -79,11 +220,21 @@ class CustomOutputParser(AgentOutputParser):
 
 
         # === 0. 清理思考模式标签（支持两种格式） ===
-        # 格式 1: <antThinking>...</antThinking>
-        # 格式 2: <thinking>...</thinking>
+        # 格式 1: <think>...</think>
+        # 格式 2: <antThinking>...</antThinking>
+        # 格式 3: <thinking>...</thinking>
         # 这些推理内容会干扰 ReAct 格式解析，需要提取思考标签之后的有效内容
+        _closed_thought_pattern = re.compile(
+            r"<(?:think|antThinking|thinking)>.*?</(?:think|antThinking|thinking)>\s*",
+            re.IGNORECASE | re.DOTALL,
+        )
+        _cleaned_output = _closed_thought_pattern.sub("", llm_output).strip()
+        if _cleaned_output != llm_output.strip():
+            app_logger.info("检测到完整思考块，已从 Action 解析文本中移除")
+            llm_output = _cleaned_output
+
         _thought_close_tags = [
-            '<antThinking/>', '<antThinking>', '</antThinking>',
+            '<think/>', '<antThinking/>', '<antThinking>', '</antThinking>',
             '<thinking/>', '<thinking>', '</thinking>',
         ]
         _first_close_pos = len(llm_output)
@@ -140,7 +291,11 @@ class CustomOutputParser(AgentOutputParser):
                             return_values={"output": interrupted_message},
                             log=llm_output,
                         )
-        elif '<antThinking' in llm_output or '<thinking' in llm_output:
+        elif (
+            '<think>' in llm_output
+            or '<antThinking' in llm_output
+            or '<thinking' in llm_output
+        ):
             # 只有思考开始标签没有结束标签，说明思考内容被截断
             app_logger.info(f"\n⚠️ 检测到未闭合思考标签（思考被截断），尝试恢复 Action/Answer")
             _inner_action_match = re.search(
@@ -164,8 +319,19 @@ class CustomOutputParser(AgentOutputParser):
                 llm_output = f"行动：{_recovered_action}\n行动输入：{{}}"
                 app_logger.info(f"重构为标准格式: {llm_output[:200]}")
             else:
-                _after_think = llm_output.split('<antThinking', 1)[-1].split('<thinking', 1)[-1].strip()
-                if _after_think and '<antThinking' not in _after_think and '<thinking' not in _after_think and len(_after_think) > 5:
+                _after_think = (
+                    llm_output.split('<antThinking', 1)[-1]
+                    .split('<thinking', 1)[-1]
+                    .split('<think>', 1)[-1]
+                    .strip()
+                )
+                if (
+                    _after_think
+                    and '<antThinking' not in _after_think
+                    and '<thinking' not in _after_think
+                    and '<think>' not in _after_think
+                    and len(_after_think) > 5
+                ):
                     llm_output = _after_think
                     app_logger.info(f"策略 C 命中 - 提取思考标签后的内容，长度：{len(llm_output)}")
                 else:
@@ -240,8 +406,9 @@ class CustomOutputParser(AgentOutputParser):
                             except Exception:
                                 action_input = action_input.strip(" ").strip('"')
 
-                        # 验证解析结果：如果是字典，检查关键字段是否存在
+                        # 请求原文是查询范围的可信来源，不能让模型改写 gid 或 user_problem。
                         if isinstance(action_input, dict):
+                            action_input = self._canonicalize_action_input(action_input, action)
                             app_logger.info(f"解析成功，参数 keys: {list(action_input.keys())}")
                         else:
                             app_logger.info(f"⚠️ 解析结果不是字典，类型: {type(action_input)}")
