@@ -595,7 +595,7 @@ async def chat_agent_stream(request: Request):
         # One tool call followed by the executor's generated final pass.
         # This prevents repeated queries and keeps the report grounded in the
         # first complete observation.
-        max_iterations = 2
+        max_iterations = 1
 
         # 3. 初始化Prompt模板：使用当前请求的独立工具
         # The static template contains legacy Chinese examples for backward compatibility. Append a
