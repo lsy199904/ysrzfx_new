@@ -458,6 +458,28 @@ async def chat_agent_stream(request: Request):
             "agent stopped due to iteration limit",
             "agent stopped due to time limit",
         }
+
+    def _extract_action_preface(text: str) -> str:
+        """Keep only reasoning before the model's Action declaration.
+
+        ReAct models sometimes continue generating a speculative report after
+        the JSON action input. That text is not an intermediate observation and
+        must never be streamed as thinking content.
+        """
+        value = str(text or "")
+        markers = (
+            "\n行动：", "\n行动:", "\nAction:", "\nAction：",
+            "行动：", "行动:", "Action:", "Action：",
+        )
+        positions = [value.find(marker) for marker in markers if value.find(marker) >= 0]
+        if positions:
+            value = value[:min(positions)]
+        # A malformed model response may put a report heading before Action;
+        # never expose report sections as the initial thought stream.
+        heading_pos = value.find("## 1.")
+        if heading_pos >= 0:
+            value = value[:heading_pos]
+        return re.sub(r"</?(?:think|thinking|antThinking)\s*/?>", "", value, flags=re.IGNORECASE).strip()
     
     def _get_language_strings(is_chinese: bool) -> dict:
         """
@@ -550,7 +572,10 @@ async def chat_agent_stream(request: Request):
         
         # 使用 auto_select 场景，让大模型根据工具描述自主选择
         scene = "auto_select"
-        max_iterations = 3  # 限制最多 3 次迭代，避免多轮思考累积超过 32K 上下文
+        # Specialized security tools already return the complete observation.
+        # Allow one action only; the recovery/finalization path generates the
+        # report from that observation instead of permitting a second query.
+        max_iterations = 1
 
         # 3. 初始化Prompt模板：使用当前请求的独立工具
         # The static template contains legacy Chinese examples for backward compatibility. Append a
@@ -725,6 +750,8 @@ async def chat_agent_stream(request: Request):
         ))
         # 11. 流式响应处理：思考增量单独推送，正式答案在 agent_finish 时推送
         collected_answer = ""  # 保留原始模型输出用于诊断日志
+        pending_llm_output = ""
+        tool_call_count = 0
         final_answer_sent = False
         stream_error = ""
         
@@ -748,6 +775,11 @@ async def chat_agent_stream(request: Request):
                     try:
                         input_obj = json.loads(input_str)
                         tool_name = data.get("tool_name", "")
+                        tool_call_count += 1
+                        thought_prefix = _extract_action_preface(pending_llm_output)
+                        pending_llm_output = ""
+                        if thought_prefix:
+                            yield json.dumps({"answer": thought_prefix}, ensure_ascii=False) + "\n\n"
                         tools_use = [f"\n {str_lang['call_tool']}: {tool_name}"]
                         yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
                     except json.JSONDecodeError:
@@ -1064,12 +1096,10 @@ async def chat_agent_stream(request: Request):
             elif status in (Status.start, Status.running):
                 llm_token = data.get('llm_token', '')
                 collected_answer += llm_token  # 收集原始模型输出用于诊断
-                # Every streamed model token before agent_finish is intermediate
-                # reasoning/action content.  The outer protocolizer places it
-                # inside one server-owned <think> region and strips any model
-                # supplied boundary tags.
-                if llm_token:
-                    yield json.dumps({"answer": llm_token}, ensure_ascii=False) + "\n\n"
+                # Buffer model output until the parser confirms an Action. The
+                # model may append a speculative final report after Action
+                # Input; that suffix must never be shown as initial thinking.
+                pending_llm_output += llm_token
             
             elif status == Status.error:
                 stream_error = data.get('error', '') or stream_error
@@ -1388,10 +1418,12 @@ async def chat_agent_stream(request: Request):
                     yield encode({"answer": content})
                     continue
 
-                # Graph/status events are allowed after final_answer for
-                # backwards compatibility, but the final event must remain the
-                # last user-visible event in the normalized stream.
+                # Preserve graph_data completion events after final_answer for
+                # frontend rendering. Other intermediate events remain blocked
+                # after the think region has been closed.
                 if final_seen:
+                    if "graph_data" in payload or payload.get("type") == "graph_data":
+                        yield encode(payload)
                     continue
                 yield encode(payload)
         except Exception as exc:
