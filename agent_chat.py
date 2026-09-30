@@ -526,7 +526,7 @@ async def chat_agent_stream(request: Request):
                 "用户使用中文提问。所有面向用户的内容都必须使用中文，包括思考字段、工具状态、错误信息和最终答案。\n"
                 "保留工具名、JSON 键名、字段名、PPL、IP、时间戳和原始日志值，不要翻译这些技术值。\n"
                 "不要因为工具返回英文或历史记录使用英文而切换语言。\n"
-                "最终答案必须是完整中文 Markdown 报告；标题使用‘## 1. 查询结果概述’、‘## 2. 关键实体’、‘## 3. 攻击时间线’、‘## 4. 安全建议’。\n"
+                "最终答案必须是完整中文 Markdown 报告，并严格保留已确认的四段式标题，不得改名：‘## 1. 事件概述’、‘## 2. 关键实体’、‘## 3. 攻击详细时间线TOP3’、‘## 4. 安全建议（按历史/近期语境区分）’。\n"
                 "关键实体只列工具统计中按攻击次数排序的 Top 3 攻击源 IP，不足 3 个只列实际存在的 IP，不得虚构或展示第 4 个及之后的 IP。\n"
                 "所有中间内容都属于同一个 <think> 区域，工具完成后才能结束思考并输出 final_answer。\n"
             )
@@ -552,6 +552,47 @@ async def chat_agent_stream(request: Request):
             "Omit unsupported stages instead of inventing them.\n"
             "For the final answer, use English Markdown headings such as:\n"
             "## 1. Event Summary\n## 2. Key Entities\n## 3. Attack Timeline\n## 4. Security Recommendations\n"
+        )
+
+    def _build_recovery_report_template(is_chinese: bool) -> str:
+        """Return the confirmed detailed report template for recovery generation."""
+        if is_chinese:
+            return (
+                "严格按以下已确认模板输出，不得更换标题或删除内部条目：\n"
+                "## 1. 事件概述\n"
+                "- 时间范围：使用工具返回的真实时间范围\n"
+                "- 事件类型：暴力破解 / 账户变更 / 网络攻击 / 系统事件 / 告警分析 / 自由查询\n"
+                "- 总记录数：使用工具真实 count；如有压缩信息，写明原始数量和压缩后数量\n"
+                "- MITRE ATT&CK 技术：仅在工具数据支持时填写，否则写无明确映射\n"
+                "- 风险等级：高 / 中 / 低 / 无，并给出基于工具数据的依据\n\n"
+                "## 2. 关键实体\n"
+                "- 攻击源 Top N：N 固定为 3，按攻击次数降序；不足 3 个只列实际存在的 IP。每个 IP 展示次数、占比、内网/公网类型和工具支持的主要行为\n"
+                "- 目标对象：涉及设备、目标用户 Top 3、目标端口/协议、命中策略 ID Top 3\n"
+                "- 账户影响：账户锁定、密码错误高频账户、是否存在成功登录\n"
+                "- 综合分析：仅基于工具结果定性攻击性质\n\n"
+                "## 3. 攻击详细时间线TOP3\n"
+                "- 仅展示攻击源 Top 3；每个 IP 只使用该 IP 的真实事件\n"
+                "- 所有事件按结构化 @timestamp 升序排列，时间来自日志，不得猜测\n"
+                "- 首次探测、首次尝试、批量爆破、阶段结果、最终结果只在日志支持时出现，不得强行补齐或重排\n"
+                "- 最后按工具真实 IP 总数说明剩余 IP 数量，不得推断或虚构\n\n"
+                "## 4. 安全建议（按历史/近期语境区分）\n"
+                "- 历史复盘：溯源复盘、制度加固、规则完善、账户巡检\n"
+                "- 近期威胁：短期处置和长期防护\n"
+                "- 无数据：明确说明未查询到相关数据，并建议确认日志覆盖范围\n"
+            )
+        return (
+            "Use the confirmed detailed template below without renaming headings or deleting items:\n"
+            "## 1. Event Summary\n"
+            "- Time range, event type, verified record count, supported MITRE ATT&CK mapping, and evidence-based risk level\n\n"
+            "## 2. Key Entities\n"
+            "- Top N Attack Sources: N is fixed at 3; show only actual IPs in descending count order with count, percentage, private/public type, and supported behavior\n"
+            "- Targets: devices, Top 3 users, ports/protocols, and Top 3 policy IDs\n"
+            "- Account impact and a tool-supported overall assessment\n\n"
+            "## 3. Top 3 Detailed Attack Timelines\n"
+            "- Use only real events for each IP and sort by structured @timestamp ascending\n"
+            "- Do not invent or reorder First Probe, First Attempt, Brute Force, Stage Result, or Final Result labels\n\n"
+            "## 4. Security Recommendations\n"
+            "- Distinguish historical review, recent threat response, and no-data cases\n"
         )
     
     async def agent_chat_iterator(user_input: str, session_id: str, request_id: str):
@@ -1124,8 +1165,10 @@ async def chat_agent_stream(request: Request):
                         recovery_prompt = (
                             "Generate the complete final security report now. "
                             "Use only the tool result below; do not invent facts. "
-                            "Use exactly four Markdown sections, list only Top 3 attack-source IPs, and write in "
-                            f"{'Chinese' if is_chinese_input else 'English'}.\n\nTool result:\n{snapshot}"
+                            "Write in "
+                            f"{'Chinese' if is_chinese_input else 'English'}.\n\n"
+                            f"{_build_recovery_report_template(is_chinese_input)}\n"
+                            f"Tool result:\n{snapshot}"
                         )
                         try:
                             recovered = await asyncio.wait_for(
