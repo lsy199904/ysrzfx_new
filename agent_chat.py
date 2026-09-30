@@ -46,6 +46,7 @@ from config import (
     LLM_MAX_CONTEXT_TOKENS,
     LLM_MAX_OUTPUT_TOKENS,
     LLM_MIN_OUTPUT_TOKENS,
+    LLM_CALL_TIMEOUT,
     LLM_MODEL,
     LLM_SAFETY_MARGIN,
     LLM_TEMPERATURE,
@@ -53,7 +54,7 @@ from config import (
 
 # Final answers and tool-selection actions do not need a large completion
 # budget. A hard cap also leaves room for large but compacted observations.
-AGENT_OUTPUT_TOKEN_CAP = 8192
+AGENT_OUTPUT_TOKEN_CAP = 12000
 
 # ========================================
 # 日志配置：使用 QueueHandler + QueueListener 确保并发安全
@@ -267,7 +268,7 @@ prompts = {
             "   - MITRE ATT&CK 技术（仅攻击类）：如 T1110（暴力破解）、T1110.001（密码猜测）、T1078（有效账户）等；无对应技术时写 无明确映射\n"
             "   - 风险等级：高 / 中 / 低 / 无，并附 1 句依据\n\n"
             "   ## 2. 关键实体\n"
-            "   - 攻击源 Top N（仅列工具返回的前 5 个 IP，附次数占比，标注内网/公网；不足 5 个就显示有几个就显示几个）：\\n"\
+            "   - 攻击源 Top 3（仅列工具返回的前 3 个 IP，附次数占比，标注内网/公网；不足 3 个就显示有几个就显示几个）：\\n"\
             "     - **重要：IP 次数和占比数据在工具的 `ip_stats` 字段中已预计算好，请直接使用其中的 `count` 和 `percentage` 字段，禁止 LLM 自行计算！**\\n"\
             "     - <IP>：<内网IP/公网IP>，攻击 X 次（占比 Y%），主要行为：<工具返回的具体描述>\n"
             "     - ...\n"
@@ -276,6 +277,8 @@ prompts = {
             "   - 综合分析：一句话定性攻击性质（如：内网主机被感染后横向爆破 / 公网 IP 自动化撞库 / 历史攻击复盘等）\n\n"
             "   ## 3. 攻击详细时间线TOP3\n"
             "   每个 IP 一段，必须先收集该 IP 的所有事件并严格按每条日志的 `@timestamp` 升序排列后再输出。时间顺序是唯一的排列依据；‘首次探测’、‘首次尝试’、‘批量爆破’、‘最终结果’只允许作为事件标签，绝不能为了凑成固定四阶段而重排真实时间。时间戳格式：工具返回精确时间戳时用 [HH:MM:SS]，仅有时段时用 约 HH:MM。\n"
+            "   - 首次尝试必须取该攻击源最早的认证/登录事件；首次探测必须取真实最早的探测/网络攻击事件；批量爆破使用相关事件最早到最晚时间；最终结果使用该攻击源最后一条相关事件时间。所有时间必须来自结构化日志的 `@timestamp`，禁止根据事件名称猜测。\n"
+            "   - 如果首次探测晚于首次尝试，必须按真实时间顺序展示，不得强行调整阶段顺序或生成虚假时间。\n"
             "   **重要：IP 次数和占比数据在工具的 `ip_stats` 字段中已预计算好，请直接使用其中的 `count` 和 `percentage` 字段，禁止 LLM 自行计算！**\\n"\
             "   攻击源：<IP>（X 次，占 Y%）\n"
             "   - 只有日志中确实存在最早的探测事件时，才标记【首次探测】；之后发生的探测必须按原时间位置标记【后续探测】，不得移到时间线开头。\n"
@@ -438,16 +441,23 @@ async def chat_agent_stream(request: Request):
         app_logger.warning(f"保存请求开始日志失败：request_id={request_id}, error: {e}")
 
     def _is_chinese(text: str) -> bool:
-        """
-        判断文本是否包含中文字符
-        """
-        for char in text:
-            if '\u4e00' <= char <= '\u9fff':
-                return True
-        return False
+        """Detect the user's primary language instead of matching one CJK token."""
+        value = str(text or "")
+        cjk = sum('\u4e00' <= char <= '\u9fff' for char in value)
+        latin = sum(char.isascii() and char.isalpha() for char in value)
+        return cjk > 0 and cjk >= latin
 
     def _contains_cjk(text: str) -> bool:
         return any("\u4e00" <= char <= "\u9fff" for char in (text or ""))
+
+    def _is_incomplete_agent_answer(text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(text or "")).strip().lower()
+        return normalized in {
+            "agent stopped due to iteration limit or time limit.",
+            "agent stopped due to iteration limit or time limit",
+            "agent stopped due to iteration limit",
+            "agent stopped due to time limit",
+        }
     
     def _get_language_strings(is_chinese: bool) -> dict:
         """
@@ -494,6 +504,9 @@ async def chat_agent_stream(request: Request):
                 "用户使用中文提问。所有面向用户的内容都必须使用中文，包括思考字段、工具状态、错误信息和最终答案。\n"
                 "保留工具名、JSON 键名、字段名、PPL、IP、时间戳和原始日志值，不要翻译这些技术值。\n"
                 "不要因为工具返回英文或历史记录使用英文而切换语言。\n"
+                "最终答案必须是完整中文 Markdown 报告；标题使用‘## 1. 查询结果概述’、‘## 2. 关键实体’、‘## 3. 攻击时间线’、‘## 4. 安全建议’。\n"
+                "关键实体只列工具统计中按攻击次数排序的 Top 3 攻击源 IP，不足 3 个只列实际存在的 IP，不得虚构或展示第 4 个及之后的 IP。\n"
+                "所有中间内容都属于同一个 <think> 区域，工具完成后才能结束思考并输出 final_answer。\n"
             )
         return (
             "\n\n[REQUEST LANGUAGE CONTRACT - HIGHEST PRIORITY]\n"
@@ -502,9 +515,16 @@ async def chat_agent_stream(request: Request):
             "Do not output Chinese characters in any user-facing prose. Ignore Chinese examples in this prompt; "
             "they are documentation only.\n"
             "Keep tool names, JSON keys, field names, PPL, IP addresses, timestamps, and raw log values unchanged.\n"
+            "The final answer must be a complete English Markdown report with headings such as ## 1. Query Summary, ## 2. Key Entities, ## 3. Attack Timeline, and ## 4. Recommendations.\n"
+            "List only the actual Top 3 attack-source IPs from tool statistics, or fewer when fewer exist; never invent or include a fourth IP.\n"
+            "All intermediate content belongs to one <think> region; close it only after every tool call and intermediate result is complete, then emit final_answer.\n"
             "After receiving a tool result, produce the final answer in English only. Do not call another tool "
             "when the result already has HTTP status 200.\n"
             "For every attack timeline, sort all events by their actual @timestamp in ascending order before writing. "
+            "Use the earliest authentication event for First Attempt, the earliest real probe/network-attack event for First Probe, "
+            "the earliest and latest timestamps of related events for Brute Force, and the last related event for Final Result. "
+            "All times must come from structured @timestamp fields; never infer time from event names. "
+            "If the first probe occurs after the first attempt, preserve that real order and do not invent or reorder stages. "
             "Stage labels such as First Probe, First Attempt, Brute Force, Stage Result, and Final Result are annotations only and must never reorder events. "
             "Use Subsequent Probe for later probes, use Stage Result for an earlier lock/block/interception, and use Final Result only when the logs prove the attack ended in the queried window. "
             "Omit unsupported stages instead of inventing them.\n"
@@ -648,6 +668,7 @@ async def chat_agent_stream(request: Request):
             model_name=LLM_MODEL,
             temperature=LLM_TEMPERATURE,
             max_tokens=max_tokens,  # ← 动态计算，不再写死
+            request_timeout=LLM_CALL_TIMEOUT,
             # 【修复】通过 extra_body 传递 chat_template_kwargs 以兼容不同的 Qwen3 部署方式
             # vLLM 部署使用 chat_template_kwargs；某些自定义服务使用 enable_thinking
             # 两者都放在 extra_body 里，OpenAI client 不会校验，由服务端决定用哪个
@@ -704,7 +725,6 @@ async def chat_agent_stream(request: Request):
         ))
         # 11. 流式响应处理：思考增量单独推送，正式答案在 agent_finish 时推送
         collected_answer = ""  # 保留原始模型输出用于诊断日志
-        thought_stream = ThoughtStreamParser()
         final_answer_sent = False
         stream_error = ""
         
@@ -712,6 +732,7 @@ async def chat_agent_stream(request: Request):
         latest_graph_data = None
         # 存储 trace_info 供最终答案后推送
         latest_trace_info = None
+        latest_tool_output_obj = None
 
         async for chunk in callback.aiter():
             data = json.loads(chunk)
@@ -787,6 +808,7 @@ async def chat_agent_stream(request: Request):
                 if output_str:
                     try:
                         output_obj = json.loads(output_str)
+                        latest_tool_output_obj = output_obj
                         steps = output_obj.get("steps", [])
                         http_status = output_obj.get("http_status", 0)
                         count = output_obj.get("count", 0)
@@ -1042,11 +1064,12 @@ async def chat_agent_stream(request: Request):
             elif status in (Status.start, Status.running):
                 llm_token = data.get('llm_token', '')
                 collected_answer += llm_token  # 收集原始模型输出用于诊断
-
-                # Expose only tagged thought fragments as ``answer``; never leak
-                # raw ReAct Action/Observation text to the browser.
-                for thought_event in thought_stream.feed(llm_token):
-                    yield json.dumps({"answer": thought_event_to_answer(thought_event)}, ensure_ascii=False) + "\n\n"
+                # Every streamed model token before agent_finish is intermediate
+                # reasoning/action content.  The outer protocolizer places it
+                # inside one server-owned <think> region and strips any model
+                # supplied boundary tags.
+                if llm_token:
+                    yield json.dumps({"answer": llm_token}, ensure_ascii=False) + "\n\n"
             
             elif status == Status.error:
                 stream_error = data.get('error', '') or stream_error
@@ -1059,12 +1082,34 @@ async def chat_agent_stream(request: Request):
             elif status == Status.agent_finish:
                 final_answer = data.get("final_answer", "")
                 index_check_steps = data.get("steps", [])
-                for thought_event in thought_stream.flush():
-                    yield json.dumps({"answer": thought_event_to_answer(thought_event)}, ensure_ascii=False) + "\n\n"
                 thought_text, final_answer = split_thoughts(final_answer)
                 if thought_text:
-                    for answer_fragment in ("<think>", thought_text, "</think>"):
-                        yield json.dumps({"answer": answer_fragment}, ensure_ascii=False) + "\n\n"
+                    yield json.dumps({"answer": thought_text}, ensure_ascii=False) + "\n\n"
+
+                if _is_incomplete_agent_answer(final_answer):
+                    recovered_answer = ""
+                    if isinstance(latest_tool_output_obj, dict) and latest_tool_output_obj.get("http_status") == 200:
+                        snapshot = json.dumps(latest_tool_output_obj, ensure_ascii=False, separators=(",", ":"))
+                        snapshot = snapshot[:18000]
+                        recovery_prompt = (
+                            "Generate the complete final security report now. "
+                            "Use only the tool result below; do not invent facts. "
+                            "Use exactly four Markdown sections, list only Top 3 attack-source IPs, and write in "
+                            f"{'Chinese' if is_chinese_input else 'English'}.\n\nTool result:\n{snapshot}"
+                        )
+                        try:
+                            recovered = await asyncio.wait_for(
+                                model.ainvoke(recovery_prompt),
+                                timeout=LLM_CALL_TIMEOUT,
+                            )
+                            recovered_answer = getattr(recovered, "content", str(recovered)).strip()
+                        except Exception as exc:
+                            app_logger.warning(f"[agent_finish] recovery generation failed: {exc}")
+                    final_answer = recovered_answer or (
+                        "查询已完成，但服务未生成完整分析报告。"
+                        if is_chinese_input
+                        else "The query completed, but the service did not generate a complete analysis report."
+                    )
                 # app_logger.info(f"\n{'='*60}")
                 # app_logger.info(f"=== agent_finish DEBUG ===")
                 # app_logger.info(f"final_answer 长度：{len(final_answer)}")
@@ -1099,28 +1144,35 @@ async def chat_agent_stream(request: Request):
                     final_answer = error_msg
                     app_logger.info(f"[agent_finish] 从步骤信息构造 final_answer: {final_answer}")
 
-                # The model can still ignore the language contract. For English requests, repair
-                # the completed answer before it is sent; raw tool values are kept by the prompt.
-                if not is_chinese_input and _contains_cjk(final_answer):
+                # Repair a completed answer when the model ignores the request language.
+                # Raw tool values, field names, IPs, and timestamps are preserved by the prompt.
+                needs_chinese_repair = is_chinese_input and (
+                    not _contains_cjk(final_answer) or "## 1. Event Summary" in final_answer
+                )
+                needs_english_repair = not is_chinese_input and _contains_cjk(final_answer)
+                if needs_chinese_repair or needs_english_repair:
                     try:
+                        target_language = "Chinese" if is_chinese_input else "English"
                         translation_prompt = (
-                            "Translate the following security-analysis answer into English. "
-                            "Output only the translated answer, with no preface or explanation. "
-                            "Preserve all facts, counts, IP addresses, timestamps, field names, and Markdown structure. "
-                            "Do not output Chinese characters.\n\n"
-                            f"Answer to translate:\n{final_answer}"
+                            f"Translate the following security-analysis answer into {target_language}. "
+                            + "Output only the translated answer, with no preface or explanation. "
+                            + "Preserve all facts, counts, IP addresses, timestamps, field names, and Markdown structure. "
+                            + ("Use Chinese prose and Chinese Markdown headings.\n\n" if is_chinese_input else "Do not output Chinese characters.\n\n")
+                            + f"Answer to translate:\n{final_answer}"
                         )
                         translated = await model.ainvoke(translation_prompt)
                         translated_text = getattr(translated, "content", str(translated)).strip()
-                        if translated_text and not _contains_cjk(translated_text):
+                        language_ok = _contains_cjk(translated_text) if is_chinese_input else not _contains_cjk(translated_text)
+                        if translated_text and language_ok:
                             final_answer = translated_text
                         else:
                             raise ValueError("translation still contains CJK characters")
                     except Exception as exc:
-                        app_logger.warning(f"[agent_finish] English answer translation failed: {exc}")
+                        app_logger.warning(f"[agent_finish] {target_language} answer translation failed: {exc}")
                         final_answer = (
-                            "The model returned the final answer in the wrong language. "
-                            "Please retry the request in English."
+                            "查询已完成，但服务未能生成符合中文要求的完整报告，请稍后重试。"
+                            if is_chinese_input
+                            else "The query completed, but the service could not generate a complete English report. Please try again."
                         )
 
                 if final_answer:
@@ -1220,10 +1272,155 @@ async def chat_agent_stream(request: Request):
         # 等待任务完成，释放资源
         await task
 
+    async def protocolized_iterator(source):
+        """Normalize legacy inner events into one server-owned think region."""
+        think_open = False
+        think_closed = False
+        final_seen = False
+
+        def encode(payload):
+            return json.dumps(payload, ensure_ascii=False) + "\n\n"
+
+        def open_think():
+            nonlocal think_open
+            if think_open:
+                return []
+            think_open = True
+            return [encode({"answer": "<think>\n"})]
+
+        def close_think():
+            nonlocal think_open, think_closed
+            if think_closed:
+                return []
+            if not think_open:
+                think_open = True
+            think_closed = True
+            # Include surrounding newlines so the forbidden standalone
+            # {"answer":"</think>"} event is never emitted.
+            return [encode({"answer": "\n</think>\n"})]
+
+        tag_re = re.compile(r"</?(?:think|thinking|antThinking)\s*/?>", re.IGNORECASE)
+        tag_prefixes = ("<think", "<thinking", "<antthinking", "</think", "</thinking", "</antthinking")
+        tag_pending = ""
+
+        def sanitize_answer_chunk(value: str, flush: bool = False) -> str:
+            """Remove model tags while handling tags split across SSE tokens."""
+            nonlocal tag_pending
+            tag_pending += str(value or "")
+            output = []
+            while tag_pending:
+                match = tag_re.search(tag_pending)
+                if match:
+                    output.append(tag_pending[:match.start()])
+                    tag_pending = tag_pending[match.end():]
+                    continue
+                if not flush:
+                    keep = 0
+                    lowered = tag_pending.lower()
+                    for size in range(1, min(len(lowered), 16) + 1):
+                        if any(prefix.startswith(lowered[-size:]) for prefix in tag_prefixes):
+                            keep = size
+                    if keep:
+                        output.append(tag_pending[:-keep])
+                        tag_pending = tag_pending[-keep:]
+                        break
+                output.append(tag_pending)
+                tag_pending = ""
+            return "".join(output)
+
+        try:
+            async for raw_event in source:
+                try:
+                    payload = json.loads(raw_event.strip()) if isinstance(raw_event, str) else raw_event
+                except (TypeError, json.JSONDecodeError):
+                    if not think_closed:
+                        for event in open_think():
+                            yield event
+                    yield raw_event
+                    continue
+
+                if not isinstance(payload, dict):
+                    yield raw_event
+                    continue
+
+                if "final_answer" in payload:
+                    pending_content = sanitize_answer_chunk("", flush=True)
+                    if pending_content and not think_closed:
+                        for event in open_think():
+                            yield event
+                        yield encode({"answer": pending_content})
+                    for event in open_think():
+                        yield event
+                    for event in close_think():
+                        yield event
+                    final_text = clean_final_answer(str(payload.get("final_answer") or "")).strip()
+                    if not final_text:
+                        final_text = (
+                            "请求已完成，但服务未生成有效的最终分析结果。"
+                            if _is_chinese(user_input)
+                            else "The request completed, but the service did not produce a valid final analysis."
+                        )
+                    payload["final_answer"] = final_text
+                    payload.setdefault("is_final", True)
+                    payload.setdefault("format", "markdown")
+                    final_seen = True
+                    yield encode(payload)
+                    continue
+
+                if "tools" in payload:
+                    if think_closed:
+                        app_logger.warning("[SSE] suppressed tools event after </think>")
+                        continue
+                    for event in open_think():
+                        yield event
+                    yield encode(payload)
+                    continue
+
+                if "answer" in payload:
+                    if think_closed:
+                        app_logger.warning("[SSE] suppressed answer event after </think>")
+                        continue
+                    content = sanitize_answer_chunk(payload.get("answer") or "")
+                    if not content:
+                        continue
+                    for event in open_think():
+                        yield event
+                    yield encode({"answer": content})
+                    continue
+
+                # Graph/status events are allowed after final_answer for
+                # backwards compatibility, but the final event must remain the
+                # last user-visible event in the normalized stream.
+                if final_seen:
+                    continue
+                yield encode(payload)
+        except Exception as exc:
+            app_logger.exception("[SSE] stream normalization failed: %s", exc)
+            if not final_seen:
+                pending_content = sanitize_answer_chunk("", flush=True)
+                if pending_content:
+                    for event in open_think():
+                        yield event
+                    yield encode({"answer": pending_content})
+                for event in open_think():
+                    yield event
+                for event in close_think():
+                    yield event
+                yield encode({
+                    "final_answer": (
+                        "请求未完成，服务处理过程中发生异常，请稍后重试。"
+                        if _is_chinese(user_input)
+                        else "The request did not complete because the service encountered an error. Please try again."
+                    ),
+                    "is_final": True,
+                    "format": "markdown",
+                    "error": str(exc),
+                })
+
     # 返回流式响应
     app_logger.info(f"[响应] HTTP 200 | 正常流式响应 | request_id: {request_id}, session_id: {session_id}, user_input: {user_input}")
     return EventSourceResponse(
-        agent_chat_iterator(user_input, scoped_session_id, request_id),
+        protocolized_iterator(agent_chat_iterator(user_input, scoped_session_id, request_id)),
         headers={"X-Request-ID": request_id},
     )
 

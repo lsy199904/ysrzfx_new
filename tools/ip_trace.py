@@ -11,7 +11,7 @@ IP 溯源查询工具
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig
 from tools.index_config import INDEX_SOURCE_PATTERN
@@ -22,6 +22,63 @@ from config import (
 )
 
 logger = logging.getLogger(__name__)
+
+CST_TIMEZONE = timezone(timedelta(hours=8))
+
+
+def parse_trace_timestamp(value: str, assume_utc: bool = False) -> datetime | None:
+    """Parse a log timestamp and return an aware China Standard Time value."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        normalized = text.replace("Z", "+00:00")
+        if "T" in normalized or "+" in normalized[10:] or normalized.endswith("00:00"):
+            parsed = datetime.fromisoformat(normalized)
+        else:
+            parsed = datetime.strptime(normalized, "%Y-%m-%d %H:%M:%S.%f")
+    except ValueError:
+        try:
+            parsed = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc if assume_utc else CST_TIMEZONE)
+    return parsed.astimezone(CST_TIMEZONE)
+
+
+def normalize_trace_timestamp(value: str, assume_utc: bool = False) -> str | None:
+    """Normalize a timestamp to ISO 8601 with an explicit +08:00 offset."""
+    parsed = parse_trace_timestamp(value, assume_utc=assume_utc)
+    return parsed.isoformat(timespec="seconds") if parsed else None
+
+
+def trace_timestamp_sort_key(value: str):
+    """Return a stable chronological key; invalid/missing timestamps sort last."""
+    return parse_trace_timestamp(value) or datetime.max.replace(tzinfo=CST_TIMEZONE)
+
+
+def record_trace_timestamp(record: dict) -> str:
+    """Return a normalized CST timestamp for a trace record.
+
+    Query responses may contain the raw Elasticsearch ``@timestamp`` field or
+    an already materialized ``@timestamp_cst`` field.  The graph timeline must
+    expose one consistent, timezone-aware representation regardless of which
+    form the backend returned.
+    """
+    if not isinstance(record, dict):
+        return ""
+    value = record.get("@timestamp_cst") or record.get("@timestamp")
+    normalized = normalize_trace_timestamp(value) if value else None
+    return normalized or ""
+
+
+def trace_query_time(value: str) -> str:
+    """Convert an ISO trace time to the naive local format accepted by PPL builders."""
+    parsed = parse_trace_timestamp(value)
+    if not parsed:
+        raise ValueError(f"invalid trace timestamp: {value}")
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
 
 # 节点颜色方案（用于 ECharts visualMap）
 NODE_COLORS = {
@@ -283,7 +340,7 @@ def _build_attack_stages(timeline: list, records: list) -> list:
     ]
 
     # 按时间排序（使用 @timestamp 字段）
-    sorted_records = sorted(records, key=lambda x: x.get("@timestamp", ""))
+    sorted_records = sorted(records, key=lambda x: trace_timestamp_sort_key(record_trace_timestamp(x)))
 
     for record in sorted_records:
         # 直接从原始记录中解析 msg 字段
@@ -301,7 +358,7 @@ def _build_attack_stages(timeline: list, records: list) -> list:
 
         # 构建事件信息（使用 timeline 中的字段）
         event_info = {
-            "timestamp": record.get("@timestamp", ""),
+            "timestamp": record_trace_timestamp(record),
             "message": msg,
             "user": _get_field(record, ["user", "source.user.name", "username", "account"]),
             "action": _get_field(record, ["action", "event.action"]),
@@ -415,7 +472,7 @@ def _add_node(nodes_map: dict, identifier: str, node_type: str, record: dict,
         nid = f"device_{identifier}"
 
     # 提取时间戳
-    ts = record.get("@timestamp", "") or ""
+    ts = record_trace_timestamp(record)
 
     if nid in nodes_map:
         # 已存在，增加计数
@@ -659,13 +716,26 @@ def build_graph_data(raw_data: dict) -> dict:
         return {"nodes": [], "edges": [], "stats": {"node_count": 0, "edge_count": 0, "type_distribution": {}}, "render_lines": []}
 
     # 获取实际数据（非压缩时取 data 数组）
-    records = raw_data.get("data", [])
-    if not records:
+    raw_records = raw_data.get("data", [])
+    if not raw_records:
         logger.warning(f"[build_graph_data] 数据数组为空！raw_data keys: {list(raw_data.keys())}")
         # 打印完整 raw_data 用于调试
         logger.warning(f"[build_graph_data] 完整 raw_data: {json.dumps(raw_data, ensure_ascii=False)[:1000]}")
         return {"nodes": [], "edges": [], "stats": {"node_count": 0, "edge_count": 0, "type_distribution": {}}, "render_lines": []}
     
+    # Materialize the same CST field used by the other query tools.  Keep the
+    # raw @timestamp untouched for audit/debug output, while all graph
+    # timeline/stage/edge logic can consume the normalized field consistently.
+    records = []
+    for raw_record in raw_records:
+        if not isinstance(raw_record, dict):
+            continue
+        record = dict(raw_record)
+        timestamp_cst = record_trace_timestamp(record)
+        if timestamp_cst:
+            record["@timestamp_cst"] = timestamp_cst
+        records.append(record)
+
     logger.info(f"[build_graph_data] 开始处理 {len(records)} 条记录")
     # 打印第一条记录的键，用于调试字段映射
     if records:
@@ -927,7 +997,7 @@ def build_graph_data(raw_data: dict) -> dict:
     # 按时间排序 records，确保边的代表时间稳定。
     sorted_records = sorted(
         [r for r in records if isinstance(r, dict)],
-        key=lambda x: x.get("@timestamp", "") or "",
+        key=lambda x: trace_timestamp_sort_key(record_trace_timestamp(x)),
     )
 
     for record in sorted_records:
@@ -937,7 +1007,7 @@ def build_graph_data(raw_data: dict) -> dict:
         devname = _get_field(record, ["observer.name", "devname", "device"])
         policy_id = _get_field(record, ["rule.id", "policyid"])
         action = _get_field(record, ["event.action", "action"])
-        ts = record.get("@timestamp", "") or ""
+        ts = record_trace_timestamp(record)
         subtype = _get_field(record, ["fortinet.firewall.subtype", "subtype"])
         app = _get_field(record, ["application.name", "app"])
         msg = _get_field(record, ["message", "msg"])
@@ -1006,7 +1076,7 @@ def build_graph_data(raw_data: dict) -> dict:
     for i, record in enumerate(records):
         if not isinstance(record, dict):
             continue
-        ts = record.get("@timestamp", "")
+        ts = record_trace_timestamp(record)
         if not ts:
             continue
         # 提取该事件的关键信息
@@ -1025,7 +1095,7 @@ def build_graph_data(raw_data: dict) -> dict:
             event["action_display"] = _parse_action_name(event["action"])
         timeline.append(event)
     # 按时间戳升序排序
-    timeline.sort(key=lambda x: x.get("timestamp", ""))
+    timeline.sort(key=lambda x: trace_timestamp_sort_key(x.get("timestamp", "")))
 
     # 计算时间线边界
     timeline_range = {}
@@ -1033,8 +1103,8 @@ def build_graph_data(raw_data: dict) -> dict:
         timestamps = [e["timestamp"] for e in timeline if e.get("timestamp")]
         if timestamps:
             timeline_range = {
-                "start": min(timestamps),
-                "end": max(timestamps),
+                "start": timestamps[0],
+                "end": timestamps[-1],
                 "event_count": len(timestamps),
             }
 
@@ -1136,12 +1206,16 @@ def ip_trace_request(
     ppl_template = IP_TRACE_PPL_TEMPLATE
 
     # 执行查询
+    # The query builder accepts local naive timestamps, while trace metadata
+    # keeps the explicit +08:00 ISO window for the frontend and logs.
+    query_start_time = trace_query_time(start_time) if start_time else start_time
+    query_end_time = trace_query_time(end_time) if end_time else end_time
     executor = ToolExecutor(
         tool_name="ip_trace",
         ppl_template=ppl_template,
         user_problem=f"IP 溯源查询：{ip}",
-        start_time=start_time,
-        end_time=end_time,
+        start_time=query_start_time,
+        end_time=query_end_time,
         filter_ip=ip,  # 同时传入 filter_ip 以便 ToolExecutor 处理
         gid=gid,
         compression_config=IP_TRACE_COMPRESSION_CONFIG,
@@ -1166,25 +1240,17 @@ def build_trace_window(attack_time: str, pre_minutes: int = 5) -> dict:
     Returns:
         dict: {"start_time": "...", "end_time": "..."}
     """
-    try:
-        # 尝试解析带时分秒的格式
-        attack_datetime = datetime.strptime(attack_time, '%Y-%m-%d %H:%M:%S')
-    except ValueError:
-        try:
-            # 尝试解析仅日期格式
-            attack_datetime = datetime.strptime(attack_time, '%Y-%m-%d')
-            attack_datetime = attack_datetime.replace(hour=23, minute=59, second=59)
-        except ValueError:
-            # 使用当前时间
-            attack_datetime = datetime.now()
+    attack_datetime = parse_trace_timestamp(attack_time)
+    if attack_datetime is None:
+        raise ValueError(f"invalid attack timestamp: {attack_time}")
     
     # 计算时间窗口
     start_time = attack_datetime - timedelta(minutes=pre_minutes)
     end_time = attack_datetime
     
     return {
-        "start_time": start_time.strftime('%Y-%m-%d %H:%M:%S'),
-        "end_time": end_time.strftime('%Y-%m-%d %H:%M:%S'),
+        "start_time": start_time.isoformat(timespec="seconds"),
+        "end_time": end_time.isoformat(timespec="seconds"),
     }
 
 
@@ -1200,29 +1266,15 @@ def build_trace_window_range(
     than stopping at its earliest event. Callers pass timestamps already
     normalized to their query timezone.
     """
-    def parse_time(value: str, is_end: bool) -> datetime:
-        value = str(value or "").strip()
-        for fmt in (
-            '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S',
-            '%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S',
-        ):
-            try:
-                return datetime.strptime(value, fmt)
-            except ValueError:
-                continue
-        try:
-            parsed = datetime.strptime(value, '%Y-%m-%d')
-            return parsed.replace(hour=23, minute=59, second=59) if is_end else parsed
-        except ValueError:
-            return datetime.now()
-
-    first = parse_time(first_time, is_end=False)
-    last = parse_time(last_time, is_end=True)
+    first = parse_trace_timestamp(first_time)
+    last = parse_trace_timestamp(last_time)
+    if first is None or last is None:
+        raise ValueError(f"invalid trace range: {first_time} ~ {last_time}")
     if last < first:
         first, last = last, first
     return {
-        "start_time": (first - timedelta(minutes=pre_minutes)).strftime('%Y-%m-%d %H:%M:%S'),
-        "end_time": (last + timedelta(minutes=post_minutes)).strftime('%Y-%m-%d %H:%M:%S'),
+        "start_time": (first - timedelta(minutes=pre_minutes)).isoformat(timespec="seconds"),
+        "end_time": (last + timedelta(minutes=post_minutes)).isoformat(timespec="seconds"),
     }
 
 
@@ -1267,6 +1319,11 @@ def _build_trace_result(raw_result: str, ip: str, start_time: str, end_time: str
         if raw_data and isinstance(raw_data, dict) and raw_data.get("data"):
             # 【修复】构建图前先清洗 NaN/Infinity
             raw_data = _sanitize_nan(raw_data)
+            for record in raw_data.get("data", []):
+                if isinstance(record, dict):
+                    timestamp_cst = record_trace_timestamp(record)
+                    if timestamp_cst:
+                        record["@timestamp_cst"] = timestamp_cst
             graph_data = compact_graph_data(build_graph_data(raw_data))
             logger.info(
                 "[build_trace_result] graph_data 构建结果: "

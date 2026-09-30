@@ -20,12 +20,11 @@
 import json
 import logging
 from typing import Optional
-from datetime import datetime
 from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig, calculate_ip_stats
 from tools.index_config import INDEX_SOURCE_PATTERN
 from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
-from tools.ip_trace import ip_trace_request, build_trace_window_range, is_full_day_range
+from tools.ip_trace import ip_trace_request, build_trace_window_range, normalize_trace_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -90,13 +89,13 @@ def _calculate_ip_priority(raw_result: dict) -> list:
         return []
 
 
-def _get_ip_event_time_range(raw_result: dict, target_ip: str) -> tuple[str, str]:
+def _get_ip_event_time_range(raw_result: dict, target_ip: str) -> tuple[str | None, str | None]:
     """提取指定 IP 的最早和最晚账户安全事件时间。"""
     try:
         data = raw_result.get("data", [])
         if not data:
-            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            return now, now
+            logger.warning(f"[AccountTrace] IP {target_ip} 没有查询记录，跳过自动溯源")
+            return None, None
 
         timestamps = []
         for record in data:
@@ -104,21 +103,20 @@ def _get_ip_event_time_range(raw_result: dict, target_ip: str) -> tuple[str, str
             if ip == target_ip:
                 t = record.get("@timestamp")
                 if t:
-                    timestamps.append(str(t))
+                    normalized = normalize_trace_timestamp(t)
+                    if normalized:
+                        timestamps.append(normalized)
 
         if timestamps:
             first_time, last_time = min(timestamps), max(timestamps)
             logger.info(f"[AccountTrace] IP {target_ip} 的事件时间范围: {first_time} ~ {last_time}")
             return first_time, last_time
 
-        logger.warning(f"[AccountTrace] IP {target_ip} 未找到记录，回退到全局时间")
-        first_record = data[-1] if data else {}
-        fallback = first_record.get("@timestamp", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-        return fallback, fallback
+        logger.warning(f"[AccountTrace] IP {target_ip} 没有有效 @timestamp，跳过自动溯源")
+        return None, None
     except Exception as e:
         logger.error(f"[AccountTrace] 提取时间失败: {e}", exc_info=True)
-        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        return now, now
+        return None, None
 
 
 def _get_ip_first_event_time(raw_result: dict, target_ip: str) -> str:
@@ -141,14 +139,20 @@ def _auto_trace_account_security_ips(raw_result: dict, start_time: str, end_time
         
         for ip in trace_ips:
             try:
-                if is_full_day_range(start_time, end_time):
-                    ip_window = {"start_time": start_time, "end_time": end_time}
-                else:
-                    ip_first_time, ip_last_time = _get_ip_event_time_range(raw_result, ip)
-                    ip_window = build_trace_window_range(
-                        ip_first_time, ip_last_time, pre_minutes=30, post_minutes=30
-                    )
-                logger.info(f"[AccountTrace] 正在溯源 IP: {ip}，时间窗口：{ip_window['start_time']} ~ {ip_window['end_time']}")
+                ip_first_time, ip_last_time = _get_ip_event_time_range(raw_result, ip)
+                if not ip_first_time or not ip_last_time:
+                    ip_details.append({
+                        "ip": ip,
+                        "status": "skipped",
+                        "message": "缺少有效 @timestamp，未执行自动溯源",
+                    })
+                    continue
+                ip_window = build_trace_window_range(
+                    ip_first_time, ip_last_time, pre_minutes=30, post_minutes=30
+                )
+                logger.info(f"[AccountTrace] IP: {ip}")
+                logger.info(f"[AccountTrace] Attack range: {ip_first_time} ~ {ip_last_time}")
+                logger.info(f"[AccountTrace] Trace window: {ip_window['start_time']} ~ {ip_window['end_time']}")
                 
                 trace_result = ip_trace_request(
                     ip=ip,

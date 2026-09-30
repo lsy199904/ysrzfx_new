@@ -27,27 +27,19 @@ from pydantic import BaseModel, Field
 from tools.tool_base import ToolExecutor, CompressionConfig, calculate_ip_stats
 from tools.index_config import INDEX_SOURCE_PATTERN
 from config import COMPRESSION_MAX_RETURN_DATA, COMPRESSION_MAX_TOKENS, COMPRESSION_THRESHOLD
-from tools.ip_trace import ip_trace_request, build_trace_window_range, is_full_day_range
+from tools.ip_trace import (
+    ip_trace_request,
+    build_trace_window_range,
+    normalize_trace_timestamp,
+)
 
 
 def _normalize_attack_time(timestamp_str: str) -> str:
     """将攻击时间规范为东八区时间，避免对已转换的时间重复加 8 小时。"""
-    try:
-        ts_str = str(timestamp_str).strip()
-        is_explicit_utc = ts_str.endswith("Z") or ts_str.endswith("+00:00")
-        ts_clean = ts_str.removesuffix("Z").removesuffix("+00:00").strip()
-        for fmt in ('%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S'):
-            try:
-                parsed = datetime.strptime(ts_clean, fmt)
-                if is_explicit_utc:
-                    parsed += timedelta(hours=8)
-                return parsed.strftime('%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                continue
-        return timestamp_str
-    except Exception as e:
-        logger.warning(f"[Trace] 攻击时间规范化失败: {e}，返回原值: {timestamp_str}")
-        return timestamp_str
+    normalized = normalize_trace_timestamp(timestamp_str)
+    if normalized:
+        return normalized
+    return ""
 
 logger = logging.getLogger(__name__)
 
@@ -124,13 +116,13 @@ def _calculate_ip_priority(raw_result: dict) -> list:
         return []
 
 
-def _get_first_attack_time(raw_result: dict) -> str:
+def _get_first_attack_time(raw_result: dict) -> str | None:
     """从暴力破解结果中提取最早的攻击时间（UTC → CST 转换）"""
     try:
         data = raw_result.get("data", [])
         if not data:
-            logger.warning("[Trace] 数据为空，使用当前时间作为攻击时间")
-            return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            logger.warning("[Trace] 数据为空，没有有效攻击时间")
+            return None
 
         # 数据已经按时间降序排序，取最后一条即为最早
         first_record = data[-1]
@@ -141,21 +133,21 @@ def _get_first_attack_time(raw_result: dict) -> str:
             logger.info(f"[Trace] 提取到最早攻击时间: {attack_time} → {normalized_time}")
             return normalized_time
 
-        logger.warning("[Trace] 未找到 @timestamp 字段，使用当前时间")
-        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        logger.warning("[Trace] 未找到 @timestamp 字段，没有有效攻击时间")
+        return None
 
     except Exception as e:
         logger.error(f"[Trace] 提取攻击时间失败: {e}", exc_info=True)
-        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        return None
 
 
-def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str:
+def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str | None:
     """提取指定 IP 的最早攻击时间，并规范为东八区时间。"""
     try:
         data = raw_result.get("data", [])
         if not data:
-            logger.warning(f"[Trace] 数据为空，IP {target_ip} 使用当前时间")
-            return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            logger.warning(f"[Trace] 数据为空，IP {target_ip} 没有有效攻击时间")
+            return None
 
         # 数据按时间降序排列，遍历找该 IP 的最早一条（即最后匹配的那条）
         ip_first_time = None
@@ -171,12 +163,11 @@ def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str:
             logger.info(f"[Trace] IP {target_ip} 的最早攻击时间: {ip_first_time} → {normalized_time}")
             return normalized_time
 
-        # 没找到该 IP 的记录，回退到全局最早时间
-        logger.warning(f"[Trace] IP {target_ip} 在数据中未找到记录，回退到全局最早时间")
-        return _get_first_attack_time(raw_result)
+        logger.warning(f"[Trace] IP {target_ip} 没有有效 @timestamp，跳过自动溯源")
+        return None
     except Exception as e:
         logger.error(f"[Trace] 提取 IP {target_ip} 攻击时间失败: {e}", exc_info=True)
-        return _get_first_attack_time(raw_result)
+        return None
 
 
 def _get_ip_attack_time_range(raw_result: dict, target_ip: str) -> tuple[str, str]:
@@ -191,20 +182,18 @@ def _get_ip_attack_time_range(raw_result: dict, target_ip: str) -> tuple[str, st
             if ip == target_ip and timestamp:
                 timestamps.append(_normalize_attack_time(timestamp))
 
+        timestamps = [timestamp for timestamp in timestamps if timestamp]
         if timestamps:
             first_time, last_time = min(timestamps), max(timestamps)
-            logger.info(
-                f"[Trace] IP {target_ip} 攻击时间范围: {first_time} ~ {last_time}"
-            )
+            logger.info(f"[Trace] IP: {target_ip}")
+            logger.info(f"[Trace] Attack range: {first_time} ~ {last_time}")
             return first_time, last_time
 
-        fallback = _get_first_attack_time(raw_result)
-        logger.warning(f"[Trace] IP {target_ip} 未找到时间范围，回退到全局最早时间: {fallback}")
-        return fallback, fallback
+        logger.warning(f"[Trace] IP: {target_ip} 没有有效 @timestamp，跳过自动溯源")
+        return None, None
     except Exception as e:
         logger.error(f"[Trace] 提取 IP {target_ip} 攻击时间范围失败: {e}", exc_info=True)
-        fallback = _get_first_attack_time(raw_result)
-        return fallback, fallback
+        return None, None
 
 def _auto_trace_brute_force_ips(raw_result: dict, start_time: str, end_time: str, gid: str) -> dict:
     """自动对暴力破解检测到的攻击 IP 执行溯源查询"""
@@ -231,17 +220,21 @@ def _auto_trace_brute_force_ips(raw_result: dict, start_time: str, end_time: str
             try:
                 # 覆盖最早攻击前 30 分钟至最晚攻击后 30 分钟，避免
                 # 漏掉同一 IP 在当天后续发生的攻击、锁定或拦截记录。
-                if is_full_day_range(start_time, end_time):
-                    ip_window = {"start_time": start_time, "end_time": end_time}
-                else:
-                    ip_first_time, ip_last_time = _get_ip_attack_time_range(raw_result, ip)
-                    ip_window = build_trace_window_range(
-                        ip_first_time,
-                        ip_last_time,
-                        pre_minutes=30,
-                        post_minutes=30,
-                    )
-                logger.info(f"[Trace] 正在溯源 IP: {ip}，时间窗口：{ip_window['start_time']} ~ {ip_window['end_time']}")
+                ip_first_time, ip_last_time = _get_ip_attack_time_range(raw_result, ip)
+                if not ip_first_time or not ip_last_time:
+                    ip_details.append({
+                        "ip": ip,
+                        "status": "skipped",
+                        "message": "缺少有效 @timestamp，未执行自动溯源",
+                    })
+                    continue
+                ip_window = build_trace_window_range(
+                    ip_first_time,
+                    ip_last_time,
+                    pre_minutes=30,
+                    post_minutes=30,
+                )
+                logger.info(f"[Trace] Trace window: {ip_window['start_time']} ~ {ip_window['end_time']}")
 
                 trace_result = ip_trace_request(
                     ip=ip,

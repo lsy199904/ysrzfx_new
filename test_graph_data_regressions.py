@@ -35,7 +35,7 @@ from tools.brute_force import (
 )
 from tools.account_security_monitor import _auto_trace_account_security_ips
 from tools.network_attack_detection import _auto_trace_network_attack_ips
-from tools.ip_trace import build_trace_window_range, compact_graph_data
+from tools.ip_trace import build_trace_window_range, compact_graph_data, normalize_trace_timestamp
 from tools.ip_trace import IP_TRACE_PPL_TEMPLATE, _build_trace_result, build_graph_data
 
 
@@ -43,13 +43,13 @@ class GraphDataRegressionTests(unittest.TestCase):
     def test_local_timestamp_is_not_shifted_twice(self):
         self.assertEqual(
             _normalize_attack_time("2026-03-26 19:03:21"),
-            "2026-03-26 19:03:21",
+            "2026-03-26T19:03:21+08:00",
         )
 
     def test_explicit_utc_timestamp_is_converted_once(self):
         self.assertEqual(
             _normalize_attack_time("2026-03-26T11:03:21Z"),
-            "2026-03-26 19:03:21",
+            "2026-03-26T19:03:21+08:00",
         )
 
     def test_ip_first_attack_time_uses_local_query_result(self):
@@ -63,7 +63,7 @@ class GraphDataRegressionTests(unittest.TestCase):
         }
         self.assertEqual(
             _get_ip_first_attack_time(result, "10.180.120.160"),
-            "2026-03-26 19:03:21",
+            "2026-03-26T19:03:21+08:00",
         )
 
     def test_ip_trace_window_covers_earliest_and_latest_attack(self):
@@ -75,22 +75,22 @@ class GraphDataRegressionTests(unittest.TestCase):
             ]
         }
         first, last = _get_ip_attack_time_range(result, "10.180.120.160")
-        self.assertEqual(first, "2026-03-26 10:35:12")
-        self.assertEqual(last, "2026-03-26 11:40:00")
+        self.assertEqual(first, "2026-03-26T10:35:12+08:00")
+        self.assertEqual(last, "2026-03-26T11:40:00+08:00")
         self.assertEqual(
             build_trace_window_range(first, last, pre_minutes=30, post_minutes=30),
             {
-                "start_time": "2026-03-26 10:05:12",
-                "end_time": "2026-03-26 12:10:00",
+                "start_time": "2026-03-26T10:05:12+08:00",
+                "end_time": "2026-03-26T12:10:00+08:00",
             },
         )
 
     @patch("tools.brute_force.ip_trace_request")
-    def test_brute_force_auto_trace_uses_full_ip_range(self, trace_request):
+    def test_brute_force_auto_trace_uses_ip_range_not_user_full_day(self, trace_request):
         trace_request.return_value = {
             "trace_info": {
                 "status": "success",
-                "time_window": "2026-03-26 00:00:00 ~ 2026-03-26 23:59:59",
+                "time_window": "2026-03-26T10:05:12+08:00 ~ 2026-03-26T12:10:00+08:00",
             }
         }
         result = _auto_trace_brute_force_ips(
@@ -107,8 +107,8 @@ class GraphDataRegressionTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         trace_request.assert_called_once_with(
             ip="10.180.120.160",
-            start_time="2026-03-26 00:00:00",
-            end_time="2026-03-26 23:59:59",
+            start_time="2026-03-26T10:05:12+08:00",
+            end_time="2026-03-26T12:10:00+08:00",
             gid=None,
         )
 
@@ -489,8 +489,50 @@ class GraphDataRegressionTests(unittest.TestCase):
         )
         self.assertEqual(trace_request.call_count, 2)
         windows = {(call.kwargs["ip"], call.kwargs["start_time"], call.kwargs["end_time"]) for call in trace_request.call_args_list}
-        self.assertIn(("10.0.0.1", "2026-03-26 09:30:00", "2026-03-26 11:30:00"), windows)
-        self.assertIn(("10.0.0.2", "2026-03-26 11:30:00", "2026-03-26 13:30:00"), windows)
+        self.assertIn(("10.0.0.1", "2026-03-26T09:30:00+08:00", "2026-03-26T11:30:00+08:00"), windows)
+        self.assertIn(("10.0.0.2", "2026-03-26T11:30:00+08:00", "2026-03-26T13:30:00+08:00"), windows)
+
+    def test_trace_window_handles_cross_day_range_and_utc_conversion(self):
+        self.assertEqual(
+            normalize_trace_timestamp("2026-03-26T23:50:00Z", assume_utc=True),
+            "2026-03-27T07:50:00+08:00",
+        )
+
+    def test_graph_timeline_uses_timestamp_cst_and_chronological_order(self):
+        graph = build_graph_data({
+            "data": [
+                {"@timestamp": "2026-03-26T11:03:21Z", "source.ip": "10.0.0.1", "event.action": "login"},
+                {"@timestamp_cst": "2026-03-26T18:40:19+08:00", "source.ip": "10.0.0.1", "event.action": "probe"},
+            ]
+        })
+        timeline = graph["timeline"]
+        self.assertEqual(
+            [event["timestamp"] for event in timeline],
+            ["2026-03-26T18:40:19+08:00", "2026-03-26T19:03:21+08:00"],
+        )
+        self.assertEqual(
+            build_trace_window_range(
+                "2026-03-26T23:50:00+08:00",
+                "2026-03-27T00:10:00+08:00",
+                pre_minutes=30,
+                post_minutes=30,
+            ),
+            {
+                "start_time": "2026-03-26T23:20:00+08:00",
+                "end_time": "2026-03-27T00:40:00+08:00",
+            },
+        )
+
+    @patch("tools.brute_force.ip_trace_request")
+    def test_brute_force_skips_ip_without_timestamp(self, trace_request):
+        result = _auto_trace_brute_force_ips(
+            {"data": [{"attack_src": "10.0.0.9"}]},
+            start_time="2026-03-26",
+            end_time="2026-03-26",
+            gid=None,
+        )
+        trace_request.assert_not_called()
+        self.assertEqual(result["ip_details"][0]["status"], "skipped")
 
     @patch("tools.network_attack_detection.ip_trace_request")
     def test_network_auto_trace_uses_each_ip_first_and_last(self, trace_request):
@@ -510,8 +552,8 @@ class GraphDataRegressionTests(unittest.TestCase):
         )
         self.assertEqual(trace_request.call_count, 2)
         windows = {(call.kwargs["ip"], call.kwargs["start_time"], call.kwargs["end_time"]) for call in trace_request.call_args_list}
-        self.assertIn(("10.0.0.1", "2026-03-26 09:30:00", "2026-03-26 11:30:00"), windows)
-        self.assertIn(("10.0.0.2", "2026-03-26 11:30:00", "2026-03-26 13:30:00"), windows)
+        self.assertIn(("10.0.0.1", "2026-03-26T09:30:00+08:00", "2026-03-26T11:30:00+08:00"), windows)
+        self.assertIn(("10.0.0.2", "2026-03-26T11:30:00+08:00", "2026-03-26T13:30:00+08:00"), windows)
 
 
 if __name__ == "__main__":
