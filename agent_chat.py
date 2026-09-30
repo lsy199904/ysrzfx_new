@@ -201,11 +201,12 @@ prompts = {
             "- gid: 可选，设备组 ID，当用户明确提到特定设备组或防火墙设备时才传入 gid 参数；必须逐字复制用户原文中的数字，不得删减或改写（例如 19936 不能写成 1936）\n"
             "- user_problem: 必须逐字复制用户问题原文，不能改写、摘要、补充或省略任何数字\n\n"
             "【防幻觉规则 - 最重要】\n"
-            "- 【关键】所有统计数字必须来自工具返回的 compression.summary_text 或 data 字段，绝不凭空编造数字\n"
+            "- 【关键】所有统计数字必须来自工具返回的 ip_summary/ip_stats 或 compression.summary_text，绝不从 data_sample 推断数字\n"
+            "- 【关键】工具返回的 data_sample 只是原始数据样本，不代表全部记录；Top 3、总 IP 数、次数和占比必须使用 ip_summary/ip_stats\n"
             "- 【关键】时间线只能列出工具明确返回的 Top 3 攻击源 IP（不足 3 个就显示有几个就显示几个，不要凑数）。对于未在工具数据中出现的 IP、时间戳、用户名，禁止在时间线中凭空生成！\n"
             "- 【关键】如果工具返回的是聚合统计（例如 54 个 IP 共 1864 条），不要逐个列出 54 个 IP；只列 Top 3（按攻击次数），其余写 另有 X 个 IP 详见原始记录\n"
-            "- 【关键】IP 总数必须等于工具返回的 ip_count 字段（或 unique_ips 字段）。如工具返回 ip_count=3，答案里写 3 个 IP 详情 + 0 个其他 IP；如工具返回 ip_count=59，则 Top 3 + 另有 54 个 IP 详见原始记录。**严禁编造或推断 IP 总数**\n"
-            "- 【关键】工具未在 data 数组中返回的 IP，禁止出现在最终答案的任何位置（包括 Top 3、剩余 IP、时间线）。如工具 data 里有 3 个 IP，最终答案只能有这 3 个\n"
+            "- 【关键】IP 总数必须等于工具返回的 ip_summary.unique_ip_count（或 ip_count/unique_ips 字段）。如工具返回 unique_ip_count=3，答案里写 3 个 IP 详情 + 0 个其他 IP；如工具返回 unique_ip_count=59，则 Top 3 + 另有 56 个 IP 详见原始记录。**严禁编造或推断 IP 总数**\n"
+            "- 【关键】工具未在 ip_stats/ip_summary/top_ip_records 中返回的 IP，禁止出现在最终答案的任何位置（包括 Top 3、剩余 IP、时间线）\n"
             "- 【关键】时间线时间戳精度按工具数据自适应：工具返回原始日志含精确时间戳（HH:MM:SS）时，直接用 [HH:MM:SS] 格式（如 [00:00:57]）；工具仅返回时段（例如 00:00 到 11:09）时，用约 HH:MM 表达；严禁编造任何工具未给出的具体秒数\n"
             "- 【关键】禁止使用示例数据或假设数据来填充回复格式\n"
             "- 【关键】你必须基于当前工具返回的数据生成答案，不能参考历史对话中的任何数据\n"
@@ -219,7 +220,7 @@ prompts = {
             "- 历史复盘场景的措辞示例：该事件发生于 X 月 X 日，建议作为案例复盘并完善防御规则，而不是立即在防火墙封禁\n"
             "\n"
             "【其他规则】\n"
-            "- 【关键】只调用一次工具！收到工具返回后直接归纳总结生成最终答案，禁止再次调用工具！\n"
+            "- 【关键】只调用一次工具！收到 HTTP 200 工具返回后，必须直接归纳总结生成最终答案，禁止再次调用工具，也禁止重新查询缓存！\n"
             "- 【关键】free_query_request 例外：只有当 PPL 查询返回错误（状态码非 200）时才需要重新生成 PPL 再次查询\n"
             "- 【关键】brute_force_request、account_security_monitor_request、network_attack_request、system_security_request、alert_rule_request 这些工具调用一次后必须直接输出答案！\n"
             "- 【关键】如果工具返回状态码200的情况下 count=0 或 data=[]（无数据），直接按照回复格式生成最终答案说明无数据，禁止再次调用工具！\n"
@@ -591,9 +592,10 @@ async def chat_agent_stream(request: Request):
         
         # 使用 auto_select 场景，让大模型根据工具描述自主选择
         scene = "auto_select"
-        # Keep one tool call followed by a final model pass.  The second pass
-        # is required to turn the tool observation into the complete report.
-        max_iterations = 3  # 与 v1.3.14 保持一致，避免工具返回后直接 iteration stop
+        # One tool call followed by the executor's generated final pass.
+        # This prevents repeated queries and keeps the report grounded in the
+        # first complete observation.
+        max_iterations = 1
 
         # 3. 初始化Prompt模板：使用当前请求的独立工具
         # The static template contains legacy Chinese examples for backward compatibility. Append a
@@ -749,7 +751,8 @@ async def chat_agent_stream(request: Request):
             memory=user_memory,  # 绑定当前会话的独立内存
             return_intermediate_steps=True,  # 保留中间步骤（工具调用记录）
             handle_parsing_errors=True,  # 自动处理解析错误，避免崩溃
-            max_iterations=max_iterations  # 使用动态设置的迭代次数
+            max_iterations=max_iterations,  # 使用动态设置的迭代次数
+            early_stopping_method="generate",
         )
 
         # 10. 启动Agent任务（带done事件回调，确保任务结束信号正确）
@@ -768,6 +771,7 @@ async def chat_agent_stream(request: Request):
         ))
         # 11. 流式响应处理：思考增量单独推送，正式答案在 agent_finish 时推送
         collected_answer = ""  # 保留原始模型输出用于诊断日志
+        tool_call_count = 0
         final_answer_sent = False
         stream_error = ""
         
@@ -782,6 +786,7 @@ async def chat_agent_stream(request: Request):
             status = data.get("status")
             
             if status == Status.tool_start:
+                tool_call_count += 1
                 tools_use = [f"\n {str_lang['start_exec_tool']}"]
                 yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
             
@@ -1109,7 +1114,9 @@ async def chat_agent_stream(request: Request):
                 collected_answer += llm_token  # 收集原始模型输出用于诊断
                 # 与此前正确版本一致：模型生成的中间 token 立即进入
                 # 服务端统一的 think 区域，避免思考内容在工具调用前丢失。
-                if llm_token:
+                # 工具返回后的 final pass 由 agent_finish 统一输出，不能
+                # 再提前混入 think 区域，避免报告重复和中英文串流。
+                if llm_token and tool_call_count == 0:
                     yield json.dumps({"answer": llm_token}, ensure_ascii=False) + "\n\n"
             
             elif status == Status.error:

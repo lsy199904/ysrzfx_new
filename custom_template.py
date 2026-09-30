@@ -43,7 +43,10 @@ def _compact_observation_value(value, key: str = "", depth: int = 0):
     if isinstance(value, list):
         # Raw data and per-IP trace details can be large; keep enough records
         # for a useful summary while leaving the full payload available to SSE.
-        limit = 3 if key in {"data", "ip_details"} else 8
+        if key == "top_ip_records":
+            limit = 30
+        else:
+            limit = 3 if key in {"data", "ip_details"} else 8
         compacted = []
         for item in value[:limit]:
             child = _compact_observation_value(item, key, depth + 1)
@@ -68,6 +71,29 @@ def _compact_observation_value(value, key: str = "", depth: int = 0):
     return value
 
 
+def _prompt_field(record: dict, field: str):
+    """Read flat or dotted fields while preparing the model observation."""
+    if not isinstance(record, dict):
+        return None
+    if field in record and record[field] not in (None, ""):
+        return record[field]
+    value = record
+    for part in field.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value if value not in (None, "") else None
+
+
+def _prompt_ip(record: dict):
+    """Return the attack-source field used by the specialized tools."""
+    for field in ("attack_src", "source.ip", "srcip", "uiscrip", "remip"):
+        value = _prompt_field(record, field)
+        if value:
+            return str(value)
+    return None
+
+
 def compact_observation_for_llm(observation: str) -> str:
     """Bound a tool observation used in the ReAct scratchpad.
 
@@ -87,9 +113,11 @@ def compact_observation_for_llm(observation: str) -> str:
             # Put summaries and query steps ahead of raw records.  This keeps
             # the useful explanation when a response contains hundreds of
             # records plus a large trace graph.
+            # Put deterministic aggregate statistics before any sampled raw
+            # records.  The model must never infer Top 3 from data[:3].
             priority_keys = (
-                "steps", "ppl_query", "http_status", "error", "suggestion",
-                "count", "compression", "ip_stats", "trace_info", "status",
+                "ip_stats", "count", "compression", "steps", "ppl_query",
+                "http_status", "error", "suggestion", "trace_info", "status",
                 "message", "ip_count", "time_window",
             )
             projected = {
@@ -97,12 +125,49 @@ def compact_observation_for_llm(observation: str) -> str:
                 for key in priority_keys
                 if key in parsed
             }
+            ip_stats = parsed.get("ip_stats")
+            if isinstance(ip_stats, list):
+                projected["ip_summary"] = {
+                    "total_records": parsed.get("count", 0),
+                    "unique_ip_count": len(ip_stats),
+                    "top3": ip_stats[:3],
+                }
             compression = parsed.get("compression")
-            if not (isinstance(compression, dict) and compression.get("compressed")):
-                if "data" in parsed:
-                    projected["data"] = parsed["data"]
-            elif "data" in parsed:
-                projected["data_sample"] = parsed["data"][:3] if isinstance(parsed["data"], list) else parsed["data"]
+            if isinstance(compression, dict):
+                # Keep the pre-query summary explicitly available even when
+                # the full compression object is shortened later.
+                if compression.get("summary_text"):
+                    projected["summary_text"] = compression["summary_text"]
+                projected["compression_meta"] = {
+                    key: compression.get(key)
+                    for key in ("compressed", "original_count", "compressed_count")
+                    if key in compression
+                }
+
+            if isinstance(ip_stats, list):
+                records = parsed.get("data")
+                if isinstance(records, list) and ip_stats:
+                    top_ips = {
+                        str(item.get("ip"))
+                        for item in ip_stats[:3]
+                        if isinstance(item, dict) and item.get("ip")
+                    }
+                    if top_ips:
+                        projected["top_ip_records"] = [
+                            record for record in records
+                            if _prompt_ip(record) in top_ips
+                        ][:30]
+
+            if "data" in parsed:
+                projected["data_sample"] = (
+                    parsed["data"][:3]
+                    if isinstance(parsed["data"], list)
+                    else parsed["data"]
+                )
+                projected["data_note"] = (
+                    "data_sample is incomplete and must not be used for Top 3, "
+                    "counts, percentages, unique IP totals, or ranking. Use ip_summary/ip_stats."
+                )
             compacted = _compact_observation_value(projected)
         else:
             compacted = _compact_observation_value(parsed)
