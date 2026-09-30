@@ -335,7 +335,7 @@ async def wrap_done(fn: Awaitable, event: asyncio.Event):
     except Exception as e:
         app_logger.exception(e)
         msg = f"Caught exception: {e}"
-        logger.error(f'{e.__class__.__name__}: {msg}',)
+        app_logger.error(f'{e.__class__.__name__}: {msg}',)
     finally:
         # Signal the aiter to stop.
         event.set() #通知等待该事件的其他协程，任务已完成
@@ -595,7 +595,7 @@ async def chat_agent_stream(request: Request):
         # One tool call followed by the executor's generated final pass.
         # This prevents repeated queries and keeps the report grounded in the
         # first complete observation.
-        max_iterations = 1
+        max_iterations = 2
 
         # 3. 初始化Prompt模板：使用当前请求的独立工具
         # The static template contains legacy Chinese examples for backward compatibility. Append a
@@ -752,7 +752,6 @@ async def chat_agent_stream(request: Request):
             return_intermediate_steps=True,  # 保留中间步骤（工具调用记录）
             handle_parsing_errors=True,  # 自动处理解析错误，避免崩溃
             max_iterations=max_iterations,  # 使用动态设置的迭代次数
-            early_stopping_method="generate",
         )
 
         # 10. 启动Agent任务（带done事件回调，确保任务结束信号正确）
@@ -1137,8 +1136,10 @@ async def chat_agent_stream(request: Request):
                 if _is_incomplete_agent_answer(final_answer):
                     recovered_answer = ""
                     if isinstance(latest_tool_output_obj, dict) and latest_tool_output_obj.get("http_status") == 200:
-                        snapshot = json.dumps(latest_tool_output_obj, ensure_ascii=False, separators=(",", ":"))
-                        snapshot = snapshot[:18000]
+                        from custom_template import compact_observation_for_llm
+                        snapshot = compact_observation_for_llm(
+                            json.dumps(latest_tool_output_obj, ensure_ascii=False, separators=(",", ":"))
+                        )
                         recovery_prompt = (
                             "Generate the complete final security report now. "
                             "Use only the tool result below; do not invent facts. "
