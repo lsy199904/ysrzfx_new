@@ -459,28 +459,6 @@ async def chat_agent_stream(request: Request):
             "agent stopped due to time limit",
         }
 
-    def _extract_action_preface(text: str) -> str:
-        """Keep only reasoning before the model's Action declaration.
-
-        ReAct models sometimes continue generating a speculative report after
-        the JSON action input. That text is not an intermediate observation and
-        must never be streamed as thinking content.
-        """
-        value = str(text or "")
-        markers = (
-            "\n行动：", "\n行动:", "\nAction:", "\nAction：",
-            "行动：", "行动:", "Action:", "Action：",
-        )
-        positions = [value.find(marker) for marker in markers if value.find(marker) >= 0]
-        if positions:
-            value = value[:min(positions)]
-        # A malformed model response may put a report heading before Action;
-        # never expose report sections as the initial thought stream.
-        heading_pos = value.find("## 1.")
-        if heading_pos >= 0:
-            value = value[:heading_pos]
-        return re.sub(r"</?(?:think|thinking|antThinking)\s*/?>", "", value, flags=re.IGNORECASE).strip()
-    
     def _get_language_strings(is_chinese: bool) -> dict:
         """
         根据语言返回对应的字符串
@@ -613,10 +591,9 @@ async def chat_agent_stream(request: Request):
         
         # 使用 auto_select 场景，让大模型根据工具描述自主选择
         scene = "auto_select"
-        # Specialized security tools already return the complete observation.
-        # Allow one action only; the recovery/finalization path generates the
-        # report from that observation instead of permitting a second query.
-        max_iterations = 1
+        # Keep one tool call followed by a final model pass.  The second pass
+        # is required to turn the tool observation into the complete report.
+        max_iterations = 3  # 与 v1.3.14 保持一致，避免工具返回后直接 iteration stop
 
         # 3. 初始化Prompt模板：使用当前请求的独立工具
         # The static template contains legacy Chinese examples for backward compatibility. Append a
@@ -791,8 +768,6 @@ async def chat_agent_stream(request: Request):
         ))
         # 11. 流式响应处理：思考增量单独推送，正式答案在 agent_finish 时推送
         collected_answer = ""  # 保留原始模型输出用于诊断日志
-        pending_llm_output = ""
-        tool_call_count = 0
         final_answer_sent = False
         stream_error = ""
         
@@ -816,11 +791,6 @@ async def chat_agent_stream(request: Request):
                     try:
                         input_obj = json.loads(input_str)
                         tool_name = data.get("tool_name", "")
-                        tool_call_count += 1
-                        thought_prefix = _extract_action_preface(pending_llm_output)
-                        pending_llm_output = ""
-                        if thought_prefix:
-                            yield json.dumps({"answer": thought_prefix}, ensure_ascii=False) + "\n\n"
                         tools_use = [f"\n {str_lang['call_tool']}: {tool_name}"]
                         yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
                     except json.JSONDecodeError:
@@ -1137,10 +1107,10 @@ async def chat_agent_stream(request: Request):
             elif status in (Status.start, Status.running):
                 llm_token = data.get('llm_token', '')
                 collected_answer += llm_token  # 收集原始模型输出用于诊断
-                # Buffer model output until the parser confirms an Action. The
-                # model may append a speculative final report after Action
-                # Input; that suffix must never be shown as initial thinking.
-                pending_llm_output += llm_token
+                # 与此前正确版本一致：模型生成的中间 token 立即进入
+                # 服务端统一的 think 区域，避免思考内容在工具调用前丢失。
+                if llm_token:
+                    yield json.dumps({"answer": llm_token}, ensure_ascii=False) + "\n\n"
             
             elif status == Status.error:
                 stream_error = data.get('error', '') or stream_error
