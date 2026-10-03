@@ -544,6 +544,12 @@ def _render_line_timestamp(value: str) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
+    # ``record_trace_timestamp`` returns an explicit +08:00 ISO value.  Keep
+    # the established render-line display format while using the converted
+    # CST wall-clock time.
+    parsed = parse_trace_timestamp(text)
+    if parsed:
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")
     for fmt in (
         "%Y-%m-%dT%H:%M:%S.%fZ",
         "%Y-%m-%dT%H:%M:%SZ",
@@ -557,6 +563,46 @@ def _render_line_timestamp(value: str) -> str:
         except ValueError:
             continue
     return text
+
+
+def _is_brute_force_detection_record(record: dict) -> bool:
+    """Classify a trace record against the brute-force PPL predicate.
+
+    IP tracing returns both the original brute-force hits and other activity in
+    the same window.  The latter must remain in ``render_lines`` but is marked
+    as context so the frontend can style it differently.
+    """
+    if not isinstance(record, dict):
+        return False
+    subtype = _get_field(record, ["fortinet.firewall.subtype", "subtype"])
+    action = _get_field(record, ["event.action", "action"])
+    status = _get_field(record, ["fortinet.firewall.status", "status"])
+    message = _get_field(record, ["message", "msg"])
+    reason = _get_field(record, ["event.reason", "reason"])
+    source_ip = _get_field(record, ["source.ip", "srcip"])
+    condition_fields_present = any(
+        value not in (None, "")
+        for value in (subtype, action, status, message, reason, source_ip)
+    )
+    # Legacy/synthetic trace fixtures may omit all predicate fields.  Such
+    # records originate from a brute-force result and remain detection hits.
+    if not condition_fields_present:
+        return True
+    if str(reason or "").strip().lower() == "ip_blocked":
+        return False
+    if str(source_ip or "").strip() == "218.92.0.39":
+        return False
+    return (
+        (
+            str(subtype or "").strip().lower() == "system"
+            and str(action or "").strip().lower() == "login"
+            and str(status or "").strip().lower() == "failed"
+        )
+        or (
+            str(subtype or "").strip().lower() == "vpn"
+            and str(message or "").strip() == "SSL user failed to logged in"
+        )
+    )
 
 
 def _build_render_lines(records: list) -> list:
@@ -580,7 +626,15 @@ def _build_render_lines(records: list) -> list:
         policy_id = _get_field(record, ["rule.id", "policyid"])
         policy_name = _get_field(record, ["rule.name", "policyname"])
         destination_port = _get_field(record, ["destination.port", "dstport"])
-        timestamp = _render_line_timestamp(record.get("@timestamp", "") or "")
+        # Normalize every timeline timestamp to CST first.  This handles raw
+        # UTC values (including a trailing ``Z``) and already-materialized
+        # ``@timestamp_cst`` values consistently.
+        timestamp = _render_line_timestamp(record_trace_timestamp(record))
+        event_role = (
+            "detection_hit"
+            if _is_brute_force_detection_record(record)
+            else "trace_context"
+        )
 
         valid_user = user not in ("", "-", "None", "null", "nan", "N/A")
         direction = "upper" if valid_user else "lower"
@@ -629,12 +683,14 @@ def _build_render_lines(records: list) -> list:
             str(policy_name),
             str(destination_port),
             status,
+            event_role,
         )
         line = grouped.setdefault(key, {
             "base_id": base_id,
             "direction": direction,
             "count": 0,
             "status": status,
+            "event_role": event_role,
             "first_seen": "",
             "last_seen": "",
             "steps": steps,
@@ -683,6 +739,7 @@ def _build_render_lines(records: list) -> list:
             "direction": line["direction"],
             "count": line["count"],
             "status": line["status"],
+            "event_role": line["event_role"],
             "steps": line["steps"],
         }
         if line["first_seen"]:

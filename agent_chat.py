@@ -17,11 +17,14 @@ import copy
 import hashlib
 import re
 import uuid
+import ipaddress
 from pathlib import Path
 from typing import Awaitable
 from stream_formatter import (
     ThoughtStreamParser,
     clean_final_answer,
+    contains_cjk,
+    detect_response_language,
     split_thoughts,
     thought_event_to_answer,
 )
@@ -201,9 +204,9 @@ prompts = {
             "- gid: 可选，设备组 ID，当用户明确提到特定设备组或防火墙设备时才传入 gid 参数；必须逐字复制用户原文中的数字，不得删减或改写（例如 19936 不能写成 1936）\n"
             "- user_problem: 必须逐字复制用户问题原文，不能改写、摘要、补充或省略任何数字\n\n"
             "【防幻觉规则 - 最重要】\n"
-            "- 【关键】所有统计数字必须来自工具返回的 ip_summary/ip_stats 或 compression.summary_text，绝不从 data_sample 推断数字\n"
-            "- 【关键】工具返回的 data_sample 只是原始数据样本，不代表全部记录；Top 3、总 IP 数、次数和占比必须使用 ip_summary/ip_stats\n"
-            "- 【关键】时间线只能列出工具明确返回的 Top 3 攻击源 IP（不足 3 个就显示有几个就显示几个，不要凑数）。对于未在工具数据中出现的 IP、时间戳、用户名，禁止在时间线中凭空生成！\n"
+            "- 【关键】所有统计数字必须来自工具返回的 ip_summary/ip_stats 或 compression.summary_text，绝不从 data_sample 推断数字；自动溯源场景优先使用 trace_info.trace_ip_stats。\n"
+            "- 【关键】工具返回的 data_sample 只是原始数据样本，不代表全部记录；Top 3、总 IP 数、次数和占比必须使用 ip_summary/ip_stats。若存在 trace_info.trace_ips，则它是文字报告与 graph_data.graphs 的共同权威列表，按该顺序展示，累计覆盖率提前停止时不足 3 个不得补齐。\n"
+            "- 【关键】时间线只能列出工具明确返回的 trace_info.trace_ips（没有该字段时才使用统计 Top 3）攻击源 IP（不足 3 个就显示有几个就显示几个，不要凑数）。对于未在工具数据中出现的 IP、时间戳、用户名，禁止在时间线中凭空生成！\n"
             "- 【关键】如果工具返回的是聚合统计（例如 54 个 IP 共 1864 条），不要逐个列出 54 个 IP；只列 Top 3（按攻击次数），其余写 另有 X 个 IP 详见原始记录\n"
             "- 【关键】IP 总数必须等于工具返回的 ip_summary.unique_ip_count（或 ip_count/unique_ips 字段）。如工具返回 unique_ip_count=3，答案里写 3 个 IP 详情 + 0 个其他 IP；如工具返回 unique_ip_count=59，则 Top 3 + 另有 56 个 IP 详见原始记录。**严禁编造或推断 IP 总数**\n"
             "- 【关键】工具未在 ip_stats/ip_summary/top_ip_records 中返回的 IP，禁止出现在最终答案的任何位置（包括 Top 3、剩余 IP、时间线）\n"
@@ -242,11 +245,6 @@ prompts = {
             "     思考：分析用户问题意图，选择合适的工具\n"
             "     行动：选择的工具名称\n"
             "     行动输入：{{\"user_problem\": \"...\", \"start_time\": \"...\", \"end_time\": \"...\", \"filter_ip\": \"...\", \"filter_user\": \"...\", \"aggregate\": true/false, \"group_by\": \"...\", \"gid\": \"...\"}}\n\n"
-            "   如果用户用英文提问：\n"
-            "     Question: {input}\n"
-            "     Thought: Analyze the user's question and select appropriate tools\n"
-            "     Action: Selected tool name\n"
-            "     Action Input: {{\"user_problem\": \"...\", \"start_time\": \"...\", \"end_time\": \"...\", \"filter_ip\": \"...\", \"filter_user\": \"...\", \"aggregate\": true/false, \"group_by\": \"...\", \"gid\": \"...\"}}\n\n"
             "   【严禁】在输出行动和行动输入之后，不得继续输出任何查询结果、统计数据或最终答案！\n"
             "   【严禁】不得在工具返回数据之前编造或预测查询结果！\n"
             "   必须等待工具返回真实数据后，才能生成最终答案！\n\n"
@@ -254,7 +252,7 @@ prompts = {
             "   【格式硬性要求】\n"
             "   - 必须按 ## 1 → ## 2 → ## 3 → ## 4 顺序输出，缺一段即为输出不完整\n"
             "   - 仅在工具数据支持时填写具体数字；工具未给出的字段写 未提供 或留空\n"
-            "   - 时间线只展示 Top 3 攻击源 IP（不足 3个就显示有几个就显示几个，不要凑数），剩余写 另有 X 个 IP，详见原始记录\n"
+            "   - 时间线只展示与 graph_data.graphs 完全相同的 trace_info.trace_ips（不足 3个就显示有几个就显示几个，不要凑数），剩余写 另有 X 个 IP，详见原始记录\n"
             "   - 中文用户：使用中文小标题；英文用户：使用 English headers\n\n"
             "   【硬性输出要求】\n"
             "   - 工具返回 Observation 后，最终答案部分以 ## 1. 事件概述 开头\n"
@@ -269,8 +267,8 @@ prompts = {
             "   - MITRE ATT&CK 技术（仅攻击类）：如 T1110（暴力破解）、T1110.001（密码猜测）、T1078（有效账户）等；无对应技术时写 无明确映射\n"
             "   - 风险等级：高 / 中 / 低 / 无，并附 1 句依据\n\n"
             "   ## 2. 关键实体\n"
-            "   - 攻击源 Top 3（仅列工具返回的前 3 个 IP，附次数占比，标注内网/公网；不足 3 个就显示有几个就显示几个）：\\n"\
-            "     - **重要：IP 次数和占比数据在工具的 `ip_stats` 字段中已预计算好，请直接使用其中的 `count` 和 `percentage` 字段，禁止 LLM 自行计算！**\\n"\
+            "   - 攻击源 Top 3（优先列 `trace_info.trace_ips`，必须与 graph_data.graphs 的 IP 和顺序完全一致；不足 3 个就显示有几个就显示几个）：\\n"\
+            "     - **重要：优先使用 `trace_info.trace_ip_stats` 的 `count` 和 `percentage`；没有时再使用 `ip_stats` 中对应 IP 的预计算字段，禁止 LLM 自行计算！**\\n"\
             "     - <IP>：<内网IP/公网IP>，攻击 X 次（占比 Y%），主要行为：<工具返回的具体描述>\n"
             "     - ...\n"
             "   - 目标对象：涉及设备（devname）、目标用户（user Top 3）、目标端口/协议、命中策略 ID（policyid Top 3）\n"
@@ -280,7 +278,7 @@ prompts = {
             "   每个 IP 一段，必须先收集该 IP 的所有事件并严格按每条日志的 `@timestamp` 升序排列后再输出。时间顺序是唯一的排列依据；‘首次探测’、‘首次尝试’、‘批量爆破’、‘最终结果’只允许作为事件标签，绝不能为了凑成固定四阶段而重排真实时间。时间戳格式：工具返回精确时间戳时用 [HH:MM:SS]，仅有时段时用 约 HH:MM。\n"
             "   - 首次尝试必须取该攻击源最早的认证/登录事件；首次探测必须取真实最早的探测/网络攻击事件；批量爆破使用相关事件最早到最晚时间；最终结果使用该攻击源最后一条相关事件时间。所有时间必须来自结构化日志的 `@timestamp`，禁止根据事件名称猜测。\n"
             "   - 如果首次探测晚于首次尝试，必须按真实时间顺序展示，不得强行调整阶段顺序或生成虚假时间。\n"
-            "   **重要：IP 次数和占比数据在工具的 `ip_stats` 字段中已预计算好，请直接使用其中的 `count` 和 `percentage` 字段，禁止 LLM 自行计算！**\\n"\
+            "   **重要：文字报告中的攻击源列表必须与 `trace_info.trace_ips` 和 `graph_data.graphs` 完全一致；次数和占比优先使用 `trace_info.trace_ip_stats` 的预计算字段，禁止 LLM 自行计算！**\\n"\
             "   攻击源：<IP>（X 次，占 Y%）\n"
             "   - 只有日志中确实存在最早的探测事件时，才标记【首次探测】；之后发生的探测必须按原时间位置标记【后续探测】，不得移到时间线开头。\n"
             "   - 只有日志中确实存在最早的尝试/登录事件时，才标记【首次尝试】；后续尝试继续按时间顺序输出。\n"
@@ -301,7 +299,56 @@ prompts = {
             "3. 如果是通用问答不需要工具，直接输出答案即可\n\n"
             "问题：{input}\n\n"
             "思考：{agent_scratchpad}\n\n"
-),
+        ),
+    },
+    # English requests use a separate prompt instead of appending an English
+    # sentence to the legacy Chinese template.  This prevents Chinese
+    # examples and headings from steering the model back to Chinese.
+    "auto_select_en": {
+        "system_prompt": (
+            "You are a network-security analysis assistant. "
+            "Use the original user request as the only source for language and query scope. "
+            "After one successful tool call, produce the complete report without calling another tool."
+        ),
+        "format_prompt": (
+            "ENGLISH-ONLY REQUEST CONTRACT.\n"
+            "The user request is in English. Use English for every natural-language token in this prompt's output: "
+            "thought/action text, tool status, errors, headings, and final_answer. "
+            "Do not output Chinese characters. Do not copy language style from logs, history, tool output, or examples.\n"
+            "Keep tool names, JSON keys, PPL, field names, IP addresses, timestamps, and raw log values unchanged.\n"
+            "Use one tool at most. When a tool returns HTTP 200, summarize that result directly and do not call another tool. "
+            "If the result has no records, state that clearly. Never invent counts, IPs, users, timestamps, or attack types.\n\n"
+            "Available tools:\n{tools}\n\n"
+            "Tool selection:\n"
+            "- brute_force_request: failed-login and brute-force records\n"
+            "- account_security_monitor_request: account and permission changes\n"
+            "- network_attack_request: IPS/network attacks\n"
+            "- system_security_request: system and device events\n"
+            "- alert_rule_request: alert-rule analysis\n"
+            "- ip_trace_request: activity trace for a specified source IP\n"
+            "- free_query_request: custom log/PPL queries\n\n"
+            "Action input rules:\n"
+            "- Copy user_problem exactly from the original request. Never rewrite or truncate numbers such as gid 19936.\n"
+            "- Copy explicit gid, IP, user, and date values exactly. Use None only when the user did not provide a value.\n"
+            "- For a concrete date use YYYY-MM-DD; for a relative range pass the original relative wording.\n"
+            "- Use aggregate=true only when the user explicitly asks for ranking/statistics.\n\n"
+            "Before a tool call emit only a concise English action block:\n"
+            "Question: {input}\n"
+            "Thought: Select the appropriate security tool.\n"
+            "Action: one tool name\n"
+            "Action Input: {{\"user_problem\": \"...\", \"start_time\": \"...\", \"end_time\": \"...\", \"filter_ip\": null, \"filter_user\": null, \"aggregate\": false, \"group_by\": \"srcip\", \"gid\": \"...\"}}\n\n"
+            "Do not predict tool results before the tool returns.\n"
+            "After the tool result, output a complete Markdown report with exactly these headings:\n"
+            "## 1. Event Summary\n"
+            "## 2. Key Entities\n"
+            "## 3. Top 3 Detailed Attack Timelines\n"
+            "## 4. Security Recommendations\n"
+            "For automatic tracing, sources must come from trace_info.trace_ips and trace_info.trace_ip_stats in the exact order used by graph_data.graphs; show fewer when the 80% threshold stops early. Otherwise use the tool's complete ip_stats/ip_summary. "
+            "Do not rank from data samples. Sort timeline events by structured @timestamp ascending and preserve real order. "
+            "Use only stages supported by logs; never invent a stage or timestamp.\n\n"
+            "Question: {input}\n"
+            "Thought: {agent_scratchpad}\n"
+        ),
     },
 }
 
@@ -363,6 +410,10 @@ async def chat_agent_stream(request: Request):
     login_account = data.get('login_account', '')
     is_admin = bool(data.get('is_admin', False))
     allowed_gids = data.get('allowed_gids', None)
+    # Freeze the response language from the original request before any
+    # history, tool result, or model output is observed.
+    response_language = detect_response_language(user_input)
+    is_chinese_input = response_language == "zh"
 
     # ========================================
     # 请求日志
@@ -380,7 +431,11 @@ async def chat_agent_stream(request: Request):
         app_logger.warning(f"[响应] HTTP 403 | 缺少 login_account | request_id: {request_id}, session_id: {session_id}")
         return JSONResponse(
             status_code=403,
-            content={"error": "请求缺少登录账号信息，无法确认您的数据权限，请退出后重新登录再试。"},
+            content={"error": (
+                "请求缺少登录账号信息，无法确认您的数据权限，请退出后重新登录再试。"
+                if is_chinese_input
+                else "The request is missing login-account information, so data access cannot be verified. Please sign in again."
+            )},
             headers={"Content-Type": "application/json; charset=utf-8"}
         )
 
@@ -394,7 +449,11 @@ async def chat_agent_stream(request: Request):
             app_logger.warning(f"[响应] HTTP 403 | 缺少 allowed_gids | request_id: {request_id}, session_id: {session_id}, login_account: {login_account}")
             return JSONResponse(
                 status_code=403,
-                content={"error": "请求未携带用户组权限信息（allowed_gids），无法确认您的数据权限，请退出后重新登录再试。"},
+                content={"error": (
+                    "请求未携带用户组权限信息（allowed_gids），无法确认您的数据权限，请退出后重新登录再试。"
+                    if is_chinese_input
+                    else "The request is missing allowed_gids, so data access cannot be verified. Please sign in again."
+                )},
                 headers={"Content-Type": "application/json; charset=utf-8"}
             )
 
@@ -406,6 +465,7 @@ async def chat_agent_stream(request: Request):
         "is_admin": is_admin,
         "allowed_gids": normalized_gids,
         "request_id": request_id,
+        "response_language": response_language,
     })
 
     # 校验必要参数
@@ -413,7 +473,11 @@ async def chat_agent_stream(request: Request):
         app_logger.warning(f"[响应] HTTP 400 | 缺少 session_id 或 user_input | request_id: {request_id}, session_id: {session_id}, user_input: {user_input}")
         return JSONResponse(
             status_code=400,
-            content={"error": "session_id和user_input为必填参数"},
+            content={"error": (
+                "session_id和user_input为必填参数"
+                if is_chinese_input
+                else "session_id and user_input are required."
+            )},
             headers={"Content-Type": "application/json; charset=utf-8"}
         )
 
@@ -441,24 +505,432 @@ async def chat_agent_stream(request: Request):
     except Exception as e:
         app_logger.warning(f"保存请求开始日志失败：request_id={request_id}, error: {e}")
 
-    def _is_chinese(text: str) -> bool:
-        """Detect the user's primary language instead of matching one CJK token."""
-        value = str(text or "")
-        cjk = sum('\u4e00' <= char <= '\u9fff' for char in value)
-        latin = sum(char.isascii() and char.isalpha() for char in value)
-        return cjk > 0 and cjk >= latin
+    # English prose must remain English, while raw log values (for example a
+    # Chinese device/user name) are allowed to stay unchanged.  Register only
+    # values from raw record/graph sections, never backend steps or messages.
+    allowed_raw_cjk_literals = set()
 
     def _contains_cjk(text: str) -> bool:
-        return any("\u4e00" <= char <= "\u9fff" for char in (text or ""))
+        return contains_cjk(text)
+
+    def _collect_raw_cjk_literals(value) -> None:
+        if isinstance(value, dict):
+            for child in value.values():
+                _collect_raw_cjk_literals(child)
+            return
+        if isinstance(value, list):
+            for child in value:
+                _collect_raw_cjk_literals(child)
+            return
+        if not isinstance(value, str) or not _contains_cjk(value):
+            return
+        stripped = value.strip()
+        if stripped[:1] in {"{", "["}:
+            try:
+                _collect_raw_cjk_literals(json.loads(stripped))
+                return
+            except (TypeError, json.JSONDecodeError):
+                pass
+        if stripped:
+            allowed_raw_cjk_literals.add(stripped)
+        allowed_raw_cjk_literals.update(
+            segment for segment in re.findall(r"[\u4e00-\u9fff]+", stripped)
+            if segment
+        )
+
+    def _register_allowed_raw_values(tool_output: dict) -> None:
+        if not isinstance(tool_output, dict):
+            return
+        _collect_raw_cjk_literals(tool_output.get("data"))
+        trace_info = tool_output.get("trace_info")
+        if not isinstance(trace_info, dict):
+            return
+        _collect_raw_cjk_literals(trace_info.get("graph_data"))
+        for detail in trace_info.get("ip_details", []):
+            if not isinstance(detail, dict):
+                continue
+            _collect_raw_cjk_literals(detail.get("activities"))
+            _collect_raw_cjk_literals(detail.get("graph_data"))
+
+    def _language_fallback(kind: str = "error") -> str:
+        if is_chinese_input:
+            return {
+                "thought": "正在处理工具结果...",
+                "tool": "已收到工具结果。",
+                "final": "查询已完成，但服务未能生成符合中文要求的完整报告，请稍后重试。",
+                "error": "工具返回了无法直接展示的结果。",
+            }.get(kind, "正在处理请求...")
+        return {
+            "thought": "Processing the tool result...",
+            "tool": "The tool returned a structured result.",
+            "final": "The query completed, but the service could not generate a complete English report. Please try again.",
+            "error": "The tool returned a result that cannot be displayed directly.",
+        }.get(kind, "Processing the request...")
+
+    def _safe_intermediate_text(value: str) -> str:
+        """Never expose a model thought in the wrong request language."""
+        text = str(value or "")
+        if not text:
+            return ""
+        # Model-generated reasoning is intentionally not forwarded verbatim.
+        # A short server-owned status keeps the single think region useful
+        # without leaking a wrong-language chain of thought.
+        return _language_fallback("thought")
+
+    def _localize_tool_text(value: str) -> str:
+        """Translate fixed tool labels while preserving technical values."""
+        text = str(value or "")
+        if not text or not _contains_cjk(text):
+            return text
+
+        # Structured step details are generated by the tools themselves.  Map
+        # only stable labels; the captures keep index patterns, gid values,
+        # timestamps, PPL, IPs, and raw field values unchanged.
+        text = re.sub(
+            r"原始记录\s*(\d+)\s*条，压缩后\s*(\d+)\s*条",
+            r"Original \1 records, compressed to \2 records",
+            text,
+        )
+        text = re.sub(
+            r"查询完成，共\s*(\d+)\s*条记录",
+            r"Query Complete, Total \1 records",
+            text,
+        )
+        text = re.sub(
+            r"共查询到\s*(\d+)\s*条记录",
+            r"Total \1 records found",
+            text,
+        )
+
+        replacements = (
+            ("查询流程展示", "Query Flow"),
+            ("索引存在性探测", "Index Existence Check"),
+            ("解析用户问题", "Parse User Question"),
+            ("构建 PPL 查询", "Build PPL Query"),
+            ("执行 API 查询", "Execute API Query"),
+            ("返回结果", "Return Results"),
+            ("探测索引模式：", "Index pattern: "),
+            ("探测用户组：", "User groups: "),
+            ("探测结果：存在", "Result: exists"),
+            ("探测结果：不存在", "Result: not found"),
+            ("工具执行完成", "Tool execution completed"),
+            ("工具执行失败", "Tool execution failed"),
+            ("错误信息", "Error"),
+            ("查询失败", "Query failed"),
+            ("查询时间：未指定", "Query Time: Not specified"),
+            ("IP 过滤：无", "IP Filter: None"),
+            ("用户过滤：无", "User Filter: None"),
+        )
+        for source, target in replacements:
+            text = text.replace(source, target)
+
+        # If an unfamiliar backend sentence remains, suppress that prose
+        # rather than leaking Chinese into an English SSE stream.
+        return text if not _contains_cjk(text) else _language_fallback("tool")
+
+    def _safe_tools_payload(payload: dict) -> dict:
+        """Keep technical PPL/code intact, but suppress wrong-language prose."""
+        if is_chinese_input or not isinstance(payload, dict):
+            return payload
+        items = payload.get("tools")
+        if not isinstance(items, list):
+            return payload
+        safe_items = []
+        for item in items:
+            text = str(item or "")
+            if not _contains_cjk(text):
+                safe_items.append(item)
+            elif "search source=" in text or "```" in text:
+                # PPL and code are technical payloads; preserve them verbatim.
+                safe_items.append(item)
+            else:
+                safe_items.append(_localize_tool_text(text))
+        result = dict(payload)
+        result["tools"] = safe_items
+        return result
+
+    def _final_language_ok(value: str) -> bool:
+        text = str(value or "")
+        if not text:
+            return False
+        if is_chinese_input:
+            english_headings = (
+                "## 1. Event Summary",
+                "## 2. Key Entities",
+                "## 3. Attack Timeline",
+                "## 4. Security Recommendations",
+            )
+            return _contains_cjk(text) and not any(marker in text for marker in english_headings)
+        chinese_headings = (
+            "## 1. 事件概述",
+            "## 2. 关键实体",
+            "## 3. 攻击详细时间线",
+            "## 4. 安全建议",
+        )
+        if any(marker in text for marker in chinese_headings):
+            return False
+        prose = text
+        for literal in sorted(allowed_raw_cjk_literals, key=len, reverse=True):
+            prose = prose.replace(literal, "")
+        return not _contains_cjk(prose)
+
+    def _safe_final_text(value: str) -> str:
+        text = clean_final_answer(str(value or "")).strip()
+        return text if _final_language_ok(text) else _language_fallback("final")
+
+    def _localized_fixed_error(value: str, tool_output: dict | None = None) -> str:
+        """Localize deterministic permission/index errors without another LLM call."""
+        text = str(value or "")
+        if _final_language_ok(text):
+            return text
+        status = tool_output.get("http_status") if isinstance(tool_output, dict) else None
+        gid_match = re.search(r"(?:gid|user\s*group|用户组)\s*[:=]?\s*([0-9]+)", text, re.IGNORECASE)
+        gid = gid_match.group(1) if gid_match else "the requested user group"
+        if status == 403:
+            return (
+                f"抱歉，您当前没有用户组 {gid} 的查询权限。"
+                if is_chinese_input
+                else f"Access denied: you do not have permission to query user group {gid}."
+            )
+        if status == 404:
+            return (
+                f"用户组 {gid} 的日志索引不存在，无法查询。"
+                if is_chinese_input
+                else f"The log index for user group {gid} does not exist, so the query cannot be completed."
+            )
+        return text
+
+    def _structured_report_fallback(tool_output: dict | None, tool_name: str = "") -> str:
+        """Build a grounded four-part report when the final LLM pass fails."""
+        result = tool_output if isinstance(tool_output, dict) else {}
+        event_types = {
+            "brute_force_request": ("暴力破解", "brute-force activity"),
+            "network_attack_request": ("网络攻击", "network-attack activity"),
+            "account_security_monitor_request": ("账户安全事件", "account-security activity"),
+            "system_security_request": ("系统安全事件", "system-security activity"),
+            "alert_rule_request": ("告警规则分析", "alert-rule analysis"),
+            "free_query_request": ("安全日志查询", "security-log query"),
+            "ip_trace_request": ("IP 关联活动溯源", "IP activity trace"),
+        }
+        event_type_zh, event_type_en = event_types.get(
+            str(tool_name or ""),
+            ("安全日志查询", "security-log query"),
+        )
+        try:
+            count = int(result.get("count", 0) or 0)
+        except (TypeError, ValueError):
+            count = 0
+        data = result.get("data") if isinstance(result.get("data"), list) else []
+        stats = result.get("ip_stats") if isinstance(result.get("ip_stats"), list) else []
+        if not stats:
+            counts = {}
+            for record in data:
+                if not isinstance(record, dict):
+                    continue
+                ip = record.get("attack_src") or record.get("source.ip")
+                if ip:
+                    counts[str(ip)] = counts.get(str(ip), 0) + 1
+            total = sum(counts.values())
+            stats = [
+                {
+                    "ip": ip,
+                    "count": value,
+                    "percentage": round(value * 100 / total, 1) if total else 0.0,
+                }
+                for ip, value in sorted(counts.items(), key=lambda item: item[1], reverse=True)
+            ]
+        all_stats = [item for item in stats if isinstance(item, dict) and item.get("ip")]
+        compression = result.get("compression") if isinstance(result.get("compression"), dict) else {}
+        original_count = compression.get("original_count", count)
+        compressed_count = compression.get("compressed_count")
+        if compressed_count is not None and compressed_count != original_count:
+            count_text_zh = f"原始 {original_count} 条，压缩后 {compressed_count} 条"
+            count_text_en = f"Original {original_count} records, compressed to {compressed_count} records"
+        else:
+            count_text_zh = f"{count} 条"
+            count_text_en = f"{count} records"
+
+        def ip_kind(value: str) -> str:
+            try:
+                return "private" if ipaddress.ip_address(value).is_private else "public"
+            except ValueError:
+                return "unknown"
+
+        trace_info = result.get("trace_info") if isinstance(result.get("trace_info"), dict) else {}
+        # Automatic brute-force tracing may stop after one or two IPs once the
+        # 80% coverage threshold is reached.  Its trace_ips list is therefore
+        # authoritative for both the report and graph_data.graphs; do not
+        # refill the report from the full ip_stats list.
+        selected_ips = [
+            str(ip) for ip in trace_info.get("trace_ips", [])
+            if ip not in (None, "")
+        ]
+        selected_stats = trace_info.get("trace_ip_stats")
+        if selected_ips:
+            stats_by_ip = {
+                str(item.get("ip")): item
+                for item in all_stats
+            }
+            selected_stats_by_ip = {
+                str(item.get("ip")): item
+                for item in (selected_stats if isinstance(selected_stats, list) else [])
+                if isinstance(item, dict) and item.get("ip")
+            }
+            ordered_stats = []
+            total_count = sum(
+                int(item.get("count", 0) or 0)
+                for item in all_stats
+            )
+            for ip in selected_ips:
+                item = dict(selected_stats_by_ip.get(ip) or stats_by_ip.get(ip) or {"ip": ip})
+                item["ip"] = ip
+                try:
+                    item["count"] = int(item.get("count", 0) or 0)
+                except (TypeError, ValueError):
+                    item["count"] = 0
+                if "percentage" not in item:
+                    item["percentage"] = round(
+                        item["count"] * 100 / total_count, 1
+                    ) if total_count else 0.0
+                ordered_stats.append(item)
+            stats = ordered_stats
+        else:
+            # Non-tracing tools retain their historical Top 3 behavior.
+            stats = all_stats
+        top_stats = [item for item in stats[:3] if isinstance(item, dict) and item.get("ip")]
+        details = trace_info.get("ip_details") if isinstance(trace_info.get("ip_details"), list) else []
+        details_by_ip = {
+            item.get("ip"): item for item in details
+            if isinstance(item, dict) and item.get("ip")
+        }
+        if is_chinese_input:
+            lines = [
+                "## 1. 事件概述",
+                f"- 查询状态：{'成功' if result.get('http_status') == 200 else '失败'}",
+                f"- 命中记录数：{count_text_zh}",
+                f"- 攻击源数量：{len(all_stats)} 个",
+                f"- 事件类型：{event_type_zh}（以工具返回结果为准）",
+                "",
+                "## 2. 关键实体",
+                "- 攻击源 Top 3：",
+            ]
+            if top_stats:
+                for item in top_stats:
+                    lines.append(
+                        f"  - {item['ip']}：{item.get('count', 0)} 次，"
+                        f"占比 {item.get('percentage', 0)}%，{('内网' if ip_kind(str(item['ip'])) == 'private' else '公网')} IP"
+                    )
+            else:
+                lines.append("  - 未返回攻击源统计。")
+            lines.extend([
+                "- 目标对象：工具未返回的字段不作推断。",
+                "- 账户影响：工具未返回的字段不作推断。",
+                "",
+                "## 3. 攻击详细时间线TOP3",
+            ])
+            for item in top_stats:
+                detail = details_by_ip.get(item.get("ip"), {})
+                lines.append(
+                    f"- 攻击源：{item['ip']}（{item.get('count', 0)} 次，占比 {item.get('percentage', 0)}%）"
+                )
+                graph = detail.get("graph_data") if isinstance(detail, dict) else {}
+                render_lines = graph.get("render_lines", []) if isinstance(graph, dict) else []
+                if render_lines:
+                    lines.append(f"  - 关联活动线路：{len(render_lines)} 条。")
+                else:
+                    lines.append("  - 未返回该 IP 的时间线线路。")
+            if not top_stats:
+                lines.append("- 未返回可用的攻击时间线。")
+            lines.extend([
+                "",
+                "## 4. 安全建议（按历史/近期语境区分）",
+                "- 建议依据工具返回的真实记录继续复核相关日志；未返回的事实不作补充。",
+            ])
+            return "\n".join(lines)
+
+        lines = [
+            "## 1. Event Summary",
+            f"- Query status: {'successful' if result.get('http_status') == 200 else 'failed'}",
+            f"- Matching records: {count_text_en}",
+            f"- Attack-source count: {len(all_stats)}",
+            f"- Event type: {event_type_en}, based only on the tool result.",
+            "",
+            "## 2. Key Entities",
+            "- Top 3 attack sources:",
+        ]
+        if top_stats:
+            for item in top_stats:
+                lines.append(
+                    f"  - {item['ip']}: {item.get('count', 0)} events, "
+                    f"{item.get('percentage', 0)}%, {ip_kind(str(item['ip']))} IP"
+                )
+        else:
+            lines.append("  - No attack-source statistics were returned.")
+        lines.extend([
+            "- Targets: fields not returned by the tool are not inferred.",
+            "- Account impact: fields not returned by the tool are not inferred.",
+            "",
+            "## 3. Top 3 Detailed Attack Timelines",
+        ])
+        for item in top_stats:
+            detail = details_by_ip.get(item.get("ip"), {})
+            lines.append(
+                f"- Source IP: {item['ip']} ({item.get('count', 0)} events, {item.get('percentage', 0)}%)"
+            )
+            graph = detail.get("graph_data") if isinstance(detail, dict) else {}
+            render_lines = graph.get("render_lines", []) if isinstance(graph, dict) else []
+            lines.append(
+                f"  - Related activity lines: {len(render_lines)}."
+                if render_lines else "  - No timeline lines were returned for this IP."
+            )
+        if not top_stats:
+            lines.append("- No usable attack timeline was returned.")
+        lines.extend([
+            "",
+            "## 4. Security Recommendations",
+            "- Review the real records returned by the tool; do not infer facts that were not returned.",
+        ])
+        return "\n".join(lines)
 
     def _is_incomplete_agent_answer(text: str) -> bool:
         normalized = re.sub(r"\s+", " ", str(text or "")).strip().lower()
-        return normalized in {
+        if normalized in {
             "agent stopped due to iteration limit or time limit.",
             "agent stopped due to iteration limit or time limit",
             "agent stopped due to iteration limit",
             "agent stopped due to time limit",
-        }
+        }:
+            return True
+        if str(text or "").lstrip().startswith("{"):
+            try:
+                parsed = json.loads(text)
+                return isinstance(parsed, dict) and "http_status" in parsed
+            except (TypeError, json.JSONDecodeError):
+                return False
+        return False
+
+    def _deterministic_final_fallback(
+        tool_output: dict | None = None,
+        tool_name: str = "",
+    ) -> str:
+        """Return a language-safe answer without another model call.
+
+        A successful tool result must still produce a grounded report when the
+        final agent pass is truncated or times out.  Error/suggestion payloads
+        are localized separately so permission and index failures remain
+        useful instead of becoming a generic iteration-limit message.
+        """
+        result = tool_output if isinstance(tool_output, dict) else {}
+        if result.get("http_status") == 200:
+            report = _structured_report_fallback(result, tool_name=tool_name)
+            if report and _final_language_ok(report):
+                return report
+
+        candidate = result.get("suggestion") or result.get("error") or ""
+        localized = _localized_fixed_error(candidate, result)
+        if localized and _final_language_ok(localized):
+            return localized
+        return _language_fallback("final")
 
     def _get_language_strings(is_chinese: bool) -> dict:
         """
@@ -484,8 +956,8 @@ async def chat_agent_stream(request: Request):
             return {
                 "query_flow": "Query Flow",
                 "step_prefix": "Step",
-                "query_complete": "Query Complete, Total",
-                "records_suffix": "records",
+                "query_complete": "Query Complete, Total ",
+                "records_suffix": " records",
                 "query_failed": "Query Failed, HTTP Status:",
                 "tool_executed": "Tool Executed",
                 "tool_executed_failed": "Tool Execution Failed",
@@ -506,7 +978,7 @@ async def chat_agent_stream(request: Request):
                 "保留工具名、JSON 键名、字段名、PPL、IP、时间戳和原始日志值，不要翻译这些技术值。\n"
                 "不要因为工具返回英文或历史记录使用英文而切换语言。\n"
                 "最终答案必须是完整中文 Markdown 报告，并严格保留已确认的四段式标题，不得改名：‘## 1. 事件概述’、‘## 2. 关键实体’、‘## 3. 攻击详细时间线TOP3’、‘## 4. 安全建议（按历史/近期语境区分）’。\n"
-                "关键实体只列工具统计中按攻击次数排序的 Top 3 攻击源 IP，不足 3 个只列实际存在的 IP，不得虚构或展示第 4 个及之后的 IP。\n"
+                "自动溯源时，关键实体和时间线必须严格使用 trace_info.trace_ips / trace_info.trace_ip_stats，并与 graph_data.graphs 的 IP 和顺序完全一致；累计覆盖率提前停止时不足 3 个不得补齐。没有 trace_ips 时才使用工具统计 Top 3。\n"
                 "所有中间内容都属于同一个 <think> 区域，工具完成后才能结束思考并输出 final_answer。\n"
             )
         return (
@@ -517,7 +989,7 @@ async def chat_agent_stream(request: Request):
             "they are documentation only.\n"
             "Keep tool names, JSON keys, field names, PPL, IP addresses, timestamps, and raw log values unchanged.\n"
             "The final answer must be a complete English Markdown report with headings such as ## 1. Query Summary, ## 2. Key Entities, ## 3. Attack Timeline, and ## 4. Recommendations.\n"
-            "List only the actual Top 3 attack-source IPs from tool statistics, or fewer when fewer exist; never invent or include a fourth IP.\n"
+            "For automatic tracing, list only trace_info.trace_ips / trace_info.trace_ip_stats in the exact graph_data.graphs order; if cumulative coverage stops at one or two IPs, do not refill to three. Without trace_ips, use the actual Top 3 tool statistics.\n"
             "All intermediate content belongs to one <think> region; close it only after every tool call and intermediate result is complete, then emit final_answer.\n"
             "After receiving a tool result, produce the final answer in English only. Do not call another tool "
             "when the result already has HTTP status 200.\n"
@@ -545,12 +1017,12 @@ async def chat_agent_stream(request: Request):
                 "- MITRE ATT&CK 技术：仅在工具数据支持时填写，否则写无明确映射\n"
                 "- 风险等级：高 / 中 / 低 / 无，并给出基于工具数据的依据\n\n"
                 "## 2. 关键实体\n"
-                "- 攻击源 Top N：N 固定为 3，按攻击次数降序；不足 3 个只列实际存在的 IP。每个 IP 展示次数、占比、内网/公网类型和工具支持的主要行为\n"
+                "- 攻击源 Top N：自动溯源时按 trace_info.trace_ips / trace_ip_stats 顺序输出并与 graph_data.graphs 完全一致；累计覆盖率提前停止时 N 可为 1 到 3，不得从完整 ip_stats 补齐。每个 IP 展示次数、占比、内网/公网类型和工具支持的主要行为\n"
                 "- 目标对象：涉及设备、目标用户 Top 3、目标端口/协议、命中策略 ID Top 3\n"
                 "- 账户影响：账户锁定、密码错误高频账户、是否存在成功登录\n"
                 "- 综合分析：仅基于工具结果定性攻击性质\n\n"
                 "## 3. 攻击详细时间线TOP3\n"
-                "- 仅展示攻击源 Top 3；每个 IP 只使用该 IP 的真实事件\n"
+                "- 仅展示 trace_info.trace_ips 中实际选中的 1 到 3 个攻击源；每个 IP 只使用该 IP 的真实事件\n"
                 "- 所有事件按结构化 @timestamp 升序排列，时间来自日志，不得猜测\n"
                 "- 首次探测、首次尝试、批量爆破、阶段结果、最终结果只在日志支持时出现，不得强行补齐或重排\n"
                 "- 最后按工具真实 IP 总数说明剩余 IP 数量，不得推断或虚构\n\n"
@@ -564,7 +1036,7 @@ async def chat_agent_stream(request: Request):
             "## 1. Event Summary\n"
             "- Time range, event type, verified record count, supported MITRE ATT&CK mapping, and evidence-based risk level\n\n"
             "## 2. Key Entities\n"
-            "- Top N Attack Sources: N is fixed at 3; show only actual IPs in descending count order with count, percentage, private/public type, and supported behavior\n"
+            "- Top N Attack Sources: for automatic tracing use trace_info.trace_ips / trace_ip_stats in the exact graph_data.graphs order; N may be 1 to 3 when cumulative coverage stops early. Show count, percentage, private/public type, and supported behavior\n"
             "- Targets: devices, Top 3 users, ports/protocols, and Top 3 policy IDs\n"
             "- Account impact and a tool-supported overall assessment\n\n"
             "## 3. Top 3 Detailed Attack Timelines\n"
@@ -573,6 +1045,14 @@ async def chat_agent_stream(request: Request):
             "## 4. Security Recommendations\n"
             "- Distinguish historical review, recent threat response, and no-data cases\n"
         )
+
+    # Shared only by the two nested generators for this one HTTP request.
+    # It lets the outer SSE normalizer build a grounded final fallback if the
+    # inner generator terminates before emitting its own final event.
+    stream_state = {
+        "latest_tool_output": None,
+        "latest_tool_name": "",
+    }
     
     async def agent_chat_iterator(user_input: str, session_id: str, request_id: str):
         """
@@ -581,8 +1061,9 @@ async def chat_agent_stream(request: Request):
         # 1. 实例化当前请求独立的回调函数（无共享状态）
         callback = CustomAsyncIteratorCallbackHandler(request_id=request_id)
         
-        # 2. 根据用户输入判断语言
-        is_chinese_input = _is_chinese(user_input)
+        # 2. Use the language frozen at request entry.  Never re-detect from
+        # history, tool output, PPL, or model-generated text.
+        is_chinese_input = response_language == "zh"
         str_lang = _get_language_strings(is_chinese_input)
 
         # 2. 工具实例隔离：为当前请求创建独立工具副本（避免全局工具共享冲突）
@@ -591,15 +1072,14 @@ async def chat_agent_stream(request: Request):
         local_tool_names = [tool.name for tool in local_tools]  # 独立的工具名列表
         
         # 使用 auto_select 场景，让大模型根据工具描述自主选择
-        scene = "auto_select"
+        scene = "auto_select" if is_chinese_input else "auto_select_en"
         # One tool call followed by the executor's generated final pass.
         # This prevents repeated queries and keeps the report grounded in the
         # first complete observation.
         max_iterations = 1
 
-        # 3. 初始化Prompt模板：使用当前请求的独立工具
-        # The static template contains legacy Chinese examples for backward compatibility. Append a
-        # request-scoped contract after it so the current request language wins over those examples.
+        # 3. 初始化 Prompt 模板：英文请求使用完全独立的英文模板，避免
+        # 中文示例、中文标题和中文工具描述进入模型上下文。
         prompt_template = (
             prompts[scene]["format_prompt"]
             + _build_language_instruction(is_chinese_input)
@@ -607,7 +1087,8 @@ async def chat_agent_stream(request: Request):
         prompt_template_agent = CustomPromptTemplate(
             template=prompt_template,
             tools=local_tools,  # 替换为局部工具
-            input_variables=["input", "intermediate_steps", "history"]
+            input_variables=["input", "intermediate_steps", "history"],
+            language=response_language,
         )
 
         # 4. 会话内存隔离：使用 Redis 加载历史对话
@@ -620,16 +1101,25 @@ async def chat_agent_stream(request: Request):
                     input_key="input",     # 与 Agent 输入变量对应
                     output_key='output'    # 与 Agent 输出变量对应
                 )
-            # 获取当前会话的内存（无论新旧会话都要获取）
+            # English requests use a fresh memory object so a previous
+            # Chinese turn cannot enter the English-only model prompt.
             user_memory = user_sessions[session_id]
+            if response_language == "en":
+                user_memory = ConversationBufferWindowMemory(
+                    k=1,
+                    memory_key="history",
+                    input_key="input",
+                    output_key="output",
+                )
         
         # 从 Redis 加载历史对话（独立于锁，避免阻塞）
         history = await get_session_history(session_id)
-        for msg in history:
-            if msg.get("type") == "human":
-                user_memory.chat_memory.add_user_message(msg.get("data", {}).get("content", ""))
-            elif msg.get("type") == "ai":
-                user_memory.chat_memory.add_ai_message(msg.get("data", {}).get("content", ""))
+        if response_language == "zh":
+            for msg in history:
+                if msg.get("type") == "human":
+                    user_memory.chat_memory.add_user_message(msg.get("data", {}).get("content", ""))
+                elif msg.get("type") == "ai":
+                    user_memory.chat_memory.add_ai_message(msg.get("data", {}).get("content", ""))
         
         # 保存当前场景到 Redis
         try:
@@ -657,13 +1147,20 @@ async def chat_agent_stream(request: Request):
                 )
                 return 1
             return min(MAX_OUTPUT_TOKENS, available)
+
+        def _prompt_history() -> str:
+            # Do not feed a previous Chinese conversation into an English-only
+            # prompt.  The original request remains the sole language source.
+            if not is_chinese_input:
+                return ""
+            return user_memory.load_memory_variables({}).get("history", "")
         
         # 构建完整 prompt 估算总长度
         try:
             prompt_text = prompt_template_agent.format(
                 input=user_input,
                 intermediate_steps=[],
-                history=user_memory.load_memory_variables({}).get("history", "")
+                history=_prompt_history()
             )
             app_logger.info(f"[Prompt] 初始 prompt 长度：{len(prompt_text)} 字符")
             app_logger.info(f"[Prompt] 完整 prompt 内容:\n{prompt_text}\n[END prompt]")
@@ -682,7 +1179,7 @@ async def chat_agent_stream(request: Request):
                     prompt_text = prompt_template_agent.format(
                         input=user_input,
                         intermediate_steps=[],
-                        history=user_sessions[session_id].load_memory_variables({}).get("history", "")
+                        history=_prompt_history()
                     )
                     prompt_tokens = _estimate_tokens(prompt_text)
                     max_tokens = _safe_output_budget(prompt_tokens)
@@ -771,6 +1268,7 @@ async def chat_agent_stream(request: Request):
         # 11. 流式响应处理：思考增量单独推送，正式答案在 agent_finish 时推送
         collected_answer = ""  # 保留原始模型输出用于诊断日志
         tool_call_count = 0
+        model_status_sent = False
         final_answer_sent = False
         stream_error = ""
         
@@ -779,6 +1277,7 @@ async def chat_agent_stream(request: Request):
         # 存储 trace_info 供最终答案后推送
         latest_trace_info = None
         latest_tool_output_obj = None
+        latest_tool_name = ""
 
         async for chunk in callback.aiter():
             data = json.loads(chunk)
@@ -786,8 +1285,10 @@ async def chat_agent_stream(request: Request):
             
             if status == Status.tool_start:
                 tool_call_count += 1
+                latest_tool_name = data.get("tool_name", "") or latest_tool_name
+                stream_state["latest_tool_name"] = latest_tool_name
                 tools_use = [f"\n {str_lang['start_exec_tool']}"]
-                yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
+                yield json.dumps(_safe_tools_payload({'tools': tools_use}), ensure_ascii=False) + "\n\n"
             
             elif status == Status.agent_action:
                 input_str = data.get("input_str", "")
@@ -795,8 +1296,10 @@ async def chat_agent_stream(request: Request):
                     try:
                         input_obj = json.loads(input_str)
                         tool_name = data.get("tool_name", "")
+                        latest_tool_name = tool_name or latest_tool_name
+                        stream_state["latest_tool_name"] = latest_tool_name
                         tools_use = [f"\n {str_lang['call_tool']}: {tool_name}"]
-                        yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
+                        yield json.dumps(_safe_tools_payload({'tools': tools_use}), ensure_ascii=False) + "\n\n"
                     except json.JSONDecodeError:
                         pass
             
@@ -836,10 +1339,19 @@ async def chat_agent_stream(request: Request):
                     raw_final_answer = output_str[final_prefix_match.end():].strip()
                     thought_text, final_answer_content = split_thoughts(raw_final_answer)
                     if thought_text:
-                        for answer_fragment in ("<think>", thought_text, "</think>"):
-                            yield json.dumps({"answer": answer_fragment}, ensure_ascii=False) + "\n\n"
+                        yield json.dumps(
+                            {"answer": _safe_intermediate_text(thought_text)},
+                            ensure_ascii=False,
+                        ) + "\n\n"
                     # 如果有 graph_data，一并推送（优先使用 local_graph_data，否则使用 latest_graph_data）
                     graph_data_to_push = local_graph_data or latest_graph_data
+                    if _is_incomplete_agent_answer(final_answer_content):
+                        final_answer_content = _deterministic_final_fallback(
+                            latest_tool_output_obj,
+                            latest_tool_name,
+                        )
+                    else:
+                        final_answer_content = _safe_final_text(final_answer_content)
                     final_answer_sent = True
                     if graph_data_to_push:
                         yield json.dumps({'final_answer': final_answer_content, 'graph_data': graph_data_to_push, 'is_final': True, 'format': 'markdown'}, ensure_ascii=False) + "\n\n"
@@ -856,6 +1368,14 @@ async def chat_agent_stream(request: Request):
                     try:
                         output_obj = json.loads(output_str)
                         latest_tool_output_obj = output_obj
+                        stream_state["latest_tool_output"] = output_obj
+                        stream_state["latest_tool_name"] = (
+                            data.get("tool_name", "")
+                            or latest_tool_name
+                            or stream_state["latest_tool_name"]
+                        )
+                        latest_tool_name = stream_state["latest_tool_name"]
+                        _register_allowed_raw_values(output_obj)
                         steps = output_obj.get("steps", [])
                         http_status = output_obj.get("http_status", 0)
                         count = output_obj.get("count", 0)
@@ -893,7 +1413,11 @@ async def chat_agent_stream(request: Request):
                                 # 保存 graph_data 供最终答案使用
                                 # 【修复】从 ip_details 中提取所有 IP 的 graph_data 并合并
                                 trace_info = output_obj.get("trace_info", {})
-                                ip_details = output_obj.get("ip_details", [])
+                                if not isinstance(trace_info, dict):
+                                    trace_info = {}
+                                # brute_force nests ip_details under trace_info;
+                                # a few legacy tools return it at the top level.
+                                ip_details = trace_info.get("ip_details") or output_obj.get("ip_details", [])
                                 
                                 combined_graph_data = None
                                 if isinstance(trace_info, dict) and trace_info.get("graph_data"):
@@ -902,8 +1426,30 @@ async def chat_agent_stream(request: Request):
                                 elif isinstance(ip_details, list) and ip_details:
                                     # brute_force 自动溯源场景：从 ip_details 中提取每个 IP 的 graph_data
                                     all_render_lines = []
-                                    ip_graph_count = 0
-                                    for detail in ip_details:
+                                    graph_entries = []
+                                    trace_ips = [
+                                        ip for ip in trace_info.get("trace_ips", [])
+                                        if ip
+                                    ]
+                                    details = [
+                                        detail for detail in ip_details
+                                        if isinstance(detail, dict) and detail.get("ip")
+                                    ]
+                                    if trace_ips:
+                                        detail_by_ip = {d.get("ip"): d for d in details}
+                                        ordered_details = [
+                                            detail_by_ip[ip] for ip in trace_ips
+                                            if ip in detail_by_ip
+                                        ]
+                                    else:
+                                        ordered_details = sorted(
+                                            details,
+                                            key=lambda d: (
+                                                d.get("rank") is None,
+                                                d.get("rank", 0),
+                                            ),
+                                        )
+                                    for detail in ordered_details[:3]:
                                         # app_logger.info(f"[DEBUG] Detail keys: {list(detail.keys())}, has_graph: {bool(detail.get('graph_data'))}")
                                         if isinstance(detail, dict):
                                             # 直接获取 graph_data (brute_force 返回结构)
@@ -912,14 +1458,22 @@ async def chat_agent_stream(request: Request):
                                             if not ip_gd and detail.get("trace_info"):
                                                 ip_gd = detail.get("trace_info", {}).get("graph_data")
                                             
+                                            if isinstance(ip_gd, dict):
+                                                graph_entries.append({
+                                                    "ip": detail.get("ip", ""),
+                                                    "rank": detail.get("rank"),
+                                                    "brute_force_count": detail.get("brute_force_count", 0),
+                                                    "trace_event_count": detail.get("trace_event_count", 0),
+                                                    "time_window": detail.get("time_window", ""),
+                                                    "graph_data": ip_gd,
+                                                })
                                             if isinstance(ip_gd, dict) and ip_gd.get("render_lines"):
                                                 all_render_lines.extend(
                                                     line for line in ip_gd.get("render_lines", [])
                                                     if isinstance(line, dict)
                                                 )
-                                                ip_graph_count += 1
                                     
-                                    if all_render_lines:
+                                    if all_render_lines or graph_entries:
                                         render_by_id = {}
                                         for line in all_render_lines:
                                             line_id = line.get("line_id")
@@ -938,26 +1492,33 @@ async def chat_agent_stream(request: Request):
                                         merged_lines = list(render_by_id.values())
                                         combined_graph_data = {
                                             "render_lines": merged_lines,
+                                            "graphs": graph_entries,
                                             "stats": {
                                                 "event_count": sum(int(line.get("count", 0) or 0) for line in merged_lines),
                                                 "line_count": len(merged_lines),
                                                 "upper_line_count": sum(1 for line in merged_lines if line.get("direction") == "upper"),
                                                 "lower_line_count": sum(1 for line in merged_lines if line.get("direction") == "lower"),
-                                                "ip_count": ip_graph_count,
+                                                "ip_count": len(graph_entries),
                                             },
                                         }
                                         latest_graph_data = combined_graph_data
                                     else:
                                         latest_graph_data = None
-                                        yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
                                 else:
                                     # 兜底：如果没有 ip_details，且 trace_info 中有 graph_data
                                     if isinstance(trace_info, dict) and trace_info.get("graph_data"):
                                         latest_graph_data = trace_info.get("graph_data")
-                                        yield json.dumps({'tools': tools_use, 'graph_data': latest_graph_data}, ensure_ascii=False) + "\n\n"
                                     else:
                                         latest_graph_data = None
-                                        yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
+
+                                # Always expose the query-flow event.  Graph
+                                # payloads are delivered separately after the
+                                # final answer; a non-empty graph must not hide
+                                # the tool steps from the single think region.
+                                yield json.dumps(
+                                    _safe_tools_payload({'tools': tools_use}),
+                                    ensure_ascii=False,
+                                ) + "\n\n"
                             
                             # 【关键修复】HTTP 200 且 count=0 时，跳过后续处理，让 LLM 进入 agent_finish 生成最终答案
                             if count == 0:
@@ -1000,14 +1561,14 @@ async def chat_agent_stream(request: Request):
                                     f"{output_obj.get('error', '查询失败')}",
                                     "=" * 50
                                 ])
-                                yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
+                                yield json.dumps(_safe_tools_payload({'tools': tools_use}), ensure_ascii=False) + "\n\n"
                             else:
                                 no_index_text = (
                                     f"\n工具执行完成 (索引不存在): {output_obj.get('error', '查询失败')}"
                                     if is_chinese_input
                                     else f"\nTool execution completed (index not found): {output_obj.get('error', 'Query failed')}"
                                 )
-                                yield json.dumps({'tools': [no_index_text]}, ensure_ascii=False) + "\n\n"
+                                yield json.dumps(_safe_tools_payload({'tools': [no_index_text]}), ensure_ascii=False) + "\n\n"
                             # 不 return，继续循环处理 agent_finish 事件
                             continue
 
@@ -1019,14 +1580,17 @@ async def chat_agent_stream(request: Request):
                                 final_output = output_obj.get('error', default_query_error) + "\n\n" + output_obj['suggestion']
                                 thought_text, final_output = split_thoughts(final_output)
                                 if thought_text:
-                                    for answer_fragment in ("<think>", thought_text, "</think>"):
-                                        yield json.dumps({"answer": answer_fragment}, ensure_ascii=False) + "\n\n"
+                                    yield json.dumps(
+                                        {"answer": _safe_intermediate_text(thought_text)},
+                                        ensure_ascii=False,
+                                    ) + "\n\n"
                                 # 如果有 graph_data，一并推送
                                 final_answer_sent = True
+                                final_output = _safe_final_text(final_output)
                                 if latest_graph_data:
-                                    yield json.dumps({'final_answer': clean_final_answer(final_output), 'graph_data': latest_graph_data, 'is_final': True, 'format': 'markdown'}, ensure_ascii=False) + "\n\n"
+                                    yield json.dumps({'final_answer': final_output, 'graph_data': latest_graph_data, 'is_final': True, 'format': 'markdown'}, ensure_ascii=False) + "\n\n"
                                 else:
-                                    yield json.dumps({'final_answer': clean_final_answer(final_output), 'is_final': True, 'format': 'markdown'}, ensure_ascii=False) + "\n\n"
+                                    yield json.dumps({'final_answer': final_output, 'is_final': True, 'format': 'markdown'}, ensure_ascii=False) + "\n\n"
                                 task.cancel()
                                 try:
                                     await task
@@ -1064,7 +1628,7 @@ async def chat_agent_stream(request: Request):
                                     f"{str_lang['query_failed']}{http_status}",
                                     "=" * 50
                                 ])
-                                yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
+                                yield json.dumps(_safe_tools_payload({'tools': tools_use}), ensure_ascii=False) + "\n\n"
                                 continue
                         
                         if steps:
@@ -1099,24 +1663,27 @@ async def chat_agent_stream(request: Request):
                         else:
                             tools_use = [f"\n{str_lang['tool_executed']}: {output_str[:200]}..."]
                         
-                        yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
+                        yield json.dumps(_safe_tools_payload({'tools': tools_use}), ensure_ascii=False) + "\n\n"
                     except json.JSONDecodeError as e:
                         app_logger.info(f"JSON 解析失败：{e}")
                         app_logger.info(f"=== end ===\n")
                         tools_use = [
                             f"\n{str_lang['tool_executed']} ({str_lang['parse_failed']}): {output_str[:200]}..."
                         ]
-                        yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
+                        yield json.dumps(_safe_tools_payload({'tools': tools_use}), ensure_ascii=False) + "\n\n"
             
             elif status in (Status.start, Status.running):
                 llm_token = data.get('llm_token', '')
                 collected_answer += llm_token  # 收集原始模型输出用于诊断
-                # 与此前正确版本一致：模型生成的中间 token 立即进入
-                # 服务端统一的 think 区域，避免思考内容在工具调用前丢失。
-                # 工具返回后的 final pass 由 agent_finish 统一输出，不能
-                # 再提前混入 think 区域，避免报告重复和中英文串流。
-                if llm_token and tool_call_count == 0:
-                    yield json.dumps({"answer": llm_token}, ensure_ascii=False) + "\n\n"
+                # Never forward raw model reasoning.  It can contain the
+                # wrong language (and may expose private chain-of-thought).
+                # Emit one server-owned, language-safe status instead.
+                if llm_token and tool_call_count == 0 and not model_status_sent:
+                    model_status_sent = True
+                    yield json.dumps(
+                        {"answer": _language_fallback("thought")},
+                        ensure_ascii=False,
+                    ) + "\n\n"
             
             elif status == Status.error:
                 stream_error = data.get('error', '') or stream_error
@@ -1124,14 +1691,17 @@ async def chat_agent_stream(request: Request):
                     f"\n {str_lang['tool_executed_failed']}",
                     f"{str_lang['error_msg']}: {data.get('error', str_lang['unknown_error'])}"
                 ]
-                yield json.dumps({'tools': tools_use}, ensure_ascii=False) + "\n\n"
+                yield json.dumps(_safe_tools_payload({'tools': tools_use}), ensure_ascii=False) + "\n\n"
             
             elif status == Status.agent_finish:
                 final_answer = data.get("final_answer", "")
                 index_check_steps = data.get("steps", [])
                 thought_text, final_answer = split_thoughts(final_answer)
                 if thought_text:
-                    yield json.dumps({"answer": thought_text}, ensure_ascii=False) + "\n\n"
+                    yield json.dumps(
+                        {"answer": _safe_intermediate_text(thought_text)},
+                        ensure_ascii=False,
+                    ) + "\n\n"
 
                 if _is_incomplete_agent_answer(final_answer):
                     recovered_answer = ""
@@ -1140,13 +1710,19 @@ async def chat_agent_stream(request: Request):
                         snapshot = compact_observation_for_llm(
                             json.dumps(latest_tool_output_obj, ensure_ascii=False, separators=(",", ":"))
                         )
+                        recovery_prefix = (
+                            "仅使用下面的工具结果生成完整最终安全报告，不得编造事实。"
+                            "所有自然语言必须使用中文，不要输出英文说明。\n\n"
+                            if is_chinese_input
+                            else
+                            "Generate the complete final security report using only the tool result below. "
+                            "Do not invent facts. English only: do not output Chinese characters in any prose, "
+                            "heading, error, or final_answer.\n\n"
+                        )
                         recovery_prompt = (
-                            "Generate the complete final security report now. "
-                            "Use only the tool result below; do not invent facts. "
-                            "Write in "
-                            f"{'Chinese' if is_chinese_input else 'English'}.\n\n"
-                            f"{_build_recovery_report_template(is_chinese_input)}\n"
-                            f"Tool result:\n{snapshot}"
+                            recovery_prefix
+                            + f"{_build_recovery_report_template(is_chinese_input)}\n"
+                            + f"Tool result:\n{snapshot}"
                         )
                         try:
                             recovered = await asyncio.wait_for(
@@ -1154,12 +1730,16 @@ async def chat_agent_stream(request: Request):
                                 timeout=LLM_CALL_TIMEOUT,
                             )
                             recovered_answer = getattr(recovered, "content", str(recovered)).strip()
+                            if (
+                                _is_incomplete_agent_answer(recovered_answer)
+                                or not _final_language_ok(recovered_answer)
+                            ):
+                                recovered_answer = ""
                         except Exception as exc:
                             app_logger.warning(f"[agent_finish] recovery generation failed: {exc}")
-                    final_answer = recovered_answer or (
-                        "查询已完成，但服务未生成完整分析报告。"
-                        if is_chinese_input
-                        else "The query completed, but the service did not generate a complete analysis report."
+                    final_answer = recovered_answer or _deterministic_final_fallback(
+                        latest_tool_output_obj,
+                        latest_tool_name,
                     )
                 # app_logger.info(f"\n{'='*60}")
                 # app_logger.info(f"=== agent_finish DEBUG ===")
@@ -1193,6 +1773,10 @@ async def chat_agent_stream(request: Request):
                             else "The index does not exist, so the log query was closed."
                         )
                     final_answer = error_msg
+                    if not _final_language_ok(final_answer):
+                        final_answer = _localized_fixed_error(final_answer, latest_tool_output_obj)
+                        if not _final_language_ok(final_answer):
+                            final_answer = _language_fallback("final")
                     app_logger.info(f"[agent_finish] 从步骤信息构造 final_answer: {final_answer}")
 
                 # Repair a completed answer when the model ignores the request language.
@@ -1202,28 +1786,43 @@ async def chat_agent_stream(request: Request):
                 )
                 needs_english_repair = not is_chinese_input and _contains_cjk(final_answer)
                 if needs_chinese_repair or needs_english_repair:
+                    fixed_error = _localized_fixed_error(final_answer, latest_tool_output_obj)
+                    if _final_language_ok(fixed_error):
+                        final_answer = fixed_error
+                        needs_chinese_repair = False
+                        needs_english_repair = False
+                if needs_chinese_repair or needs_english_repair:
                     try:
                         target_language = "Chinese" if is_chinese_input else "English"
-                        translation_prompt = (
-                            f"Translate the following security-analysis answer into {target_language}. "
-                            + "Output only the translated answer, with no preface or explanation. "
-                            + "Preserve all facts, counts, IP addresses, timestamps, field names, and Markdown structure. "
-                            + ("Use Chinese prose and Chinese Markdown headings.\n\n" if is_chinese_input else "Do not output Chinese characters.\n\n")
-                            + f"Answer to translate:\n{final_answer}"
+                        if is_chinese_input:
+                            translation_prompt = (
+                                "请将下面的安全分析完整转换为中文。只输出转换后的答案，不要添加前言或解释。"
+                                "必须保留全部事实、数量、IP、时间戳、字段名和 Markdown 结构，并使用中文标题。\n\n"
+                                f"待转换答案：\n{final_answer}"
+                            )
+                        else:
+                            translation_prompt = (
+                                "Translate the following security-analysis answer into English. "
+                                "Output only the translated answer, with no preface or explanation. "
+                                "Preserve all facts, counts, IP addresses, timestamps, field names, and Markdown structure. "
+                                "Do not output Chinese characters.\n\n"
+                                f"Answer to translate:\n{final_answer}"
+                            )
+                        translated = await asyncio.wait_for(
+                            model.ainvoke(translation_prompt),
+                            timeout=LLM_CALL_TIMEOUT,
                         )
-                        translated = await model.ainvoke(translation_prompt)
                         translated_text = getattr(translated, "content", str(translated)).strip()
-                        language_ok = _contains_cjk(translated_text) if is_chinese_input else not _contains_cjk(translated_text)
+                        language_ok = _final_language_ok(translated_text)
                         if translated_text and language_ok:
                             final_answer = translated_text
                         else:
                             raise ValueError("translation still contains CJK characters")
                     except Exception as exc:
                         app_logger.warning(f"[agent_finish] {target_language} answer translation failed: {exc}")
-                        final_answer = (
-                            "查询已完成，但服务未能生成符合中文要求的完整报告，请稍后重试。"
-                            if is_chinese_input
-                            else "The query completed, but the service could not generate a complete English report. Please try again."
+                        final_answer = _deterministic_final_fallback(
+                            latest_tool_output_obj,
+                            latest_tool_name,
                         )
 
                 if final_answer:
@@ -1237,7 +1836,10 @@ async def chat_agent_stream(request: Request):
 
                 if should_push_final:
                     final_answer_sent = True
-                    yield json.dumps({"final_answer": clean_final_answer(final_answer), "steps": index_check_steps, "is_final": True, "format": "markdown"}, ensure_ascii=False) + "\n\n"
+                    # Tool steps have already been emitted inside the single
+                    # server-owned think region; keep the final event limited
+                    # to the public answer contract.
+                    yield json.dumps({"final_answer": clean_final_answer(final_answer), "is_final": True, "format": "markdown"}, ensure_ascii=False) + "\n\n"
 
                 # 【修复】流完后只推一次 graph_data（精简版），作为"处理完成"信号
                 if latest_trace_info or latest_graph_data:
@@ -1246,22 +1848,71 @@ async def chat_agent_stream(request: Request):
                         "status": "success",
                         "ip_count": latest_trace_info.get("ip_count", 0) if latest_trace_info else 0,
                         "time_window": latest_trace_info.get("time_window", "") if latest_trace_info else "",
+                        "trace_ips": list(latest_trace_info.get("trace_ips", []))[:3] if latest_trace_info else [],
                         "graphs": []
                     }
                     if latest_trace_info and latest_trace_info.get("ip_details"):
-                        for d in latest_trace_info["ip_details"]:
-                            if isinstance(d, dict):
-                                slim_trace["graphs"].append({
-                                    "ip": d.get("ip", ""),
-                                    "time_window": d.get("time_window", ""),
-                                    "graph_data": d.get("graph_data", {})
-                                })
+                        # Keep completion graphs in the same rank/IP order as
+                        # brute_force.trace_ips.  Do not merge different IPs
+                        # into one graph or expose traces beyond the selected
+                        # Top3 list.
+                        details = [
+                            d for d in latest_trace_info.get("ip_details", [])
+                            if isinstance(d, dict) and d.get("ip")
+                        ]
+                        trace_ips = [
+                            ip for ip in latest_trace_info.get("trace_ips", [])
+                            if ip
+                        ]
+                        if trace_ips:
+                            detail_by_ip = {d.get("ip"): d for d in details}
+                            ordered_details = [
+                                detail_by_ip[ip] for ip in trace_ips
+                                if ip in detail_by_ip
+                            ]
+                        else:
+                            ordered_details = sorted(
+                                details,
+                                key=lambda d: (
+                                    d.get("rank") is None,
+                                    d.get("rank", 0),
+                                ),
+                            )
+                        for d in ordered_details[:3]:
+                            slim_trace["graphs"].append({
+                                "ip": d.get("ip", ""),
+                                "rank": d.get("rank"),
+                                "brute_force_count": d.get("brute_force_count", 0),
+                                "trace_event_count": d.get("trace_event_count", 0),
+                                "time_window": d.get("time_window", ""),
+                                "graph_data": d.get("graph_data", {}),
+                            })
                     elif latest_graph_data:
-                        slim_trace["graphs"].append({
-                            "ip": "",
-                            "time_window": "",
-                            "graph_data": latest_graph_data
-                        })
+                        # A direct ip_trace call may provide a single graph;
+                        # a normalized brute-force payload may already contain
+                        # the per-IP ``graphs`` list.  Preserve that list
+                        # instead of collapsing it into an anonymous graph.
+                        if isinstance(latest_graph_data, dict) and isinstance(
+                            latest_graph_data.get("graphs"), list
+                        ):
+                            slim_trace["graphs"] = [
+                                graph for graph in latest_graph_data["graphs"][:3]
+                                if isinstance(graph, dict)
+                            ]
+                        else:
+                            slim_trace["graphs"].append({
+                                "ip": latest_graph_data.get("ip", "")
+                                if isinstance(latest_graph_data, dict) else "",
+                                "rank": latest_graph_data.get("rank")
+                                if isinstance(latest_graph_data, dict) else None,
+                                "brute_force_count": latest_graph_data.get("brute_force_count", 0)
+                                if isinstance(latest_graph_data, dict) else 0,
+                                "trace_event_count": latest_graph_data.get("trace_event_count", 0)
+                                if isinstance(latest_graph_data, dict) else 0,
+                                "time_window": latest_graph_data.get("time_window", "")
+                                if isinstance(latest_graph_data, dict) else "",
+                                "graph_data": latest_graph_data,
+                            })
 
                     slim_size = len(json.dumps(slim_trace, ensure_ascii=False))
                     app_logger.info(f"[agent_finish] 推送精简 graph_data，大小：{slim_size} 字符（作为完成信号）")
@@ -1306,10 +1957,9 @@ async def chat_agent_stream(request: Request):
                 # 退出循环
                 break
         if not final_answer_sent:
-            fallback_answer = (
-                "请求未完成，服务处理过程中发生异常，请稍后重试。"
-                if is_chinese_input
-                else "The request did not complete because the service encountered an error. Please try again."
+            fallback_answer = _deterministic_final_fallback(
+                latest_tool_output_obj,
+                latest_tool_name,
             )
             app_logger.warning(
                 f"[agent_chat] 未收到 final_answer，发送统一兜底完成事件: {stream_error or 'unknown error'}"
@@ -1346,9 +1996,14 @@ async def chat_agent_stream(request: Request):
             if not think_open:
                 think_open = True
             think_closed = True
-            # Include surrounding newlines so the forbidden standalone
-            # {"answer":"</think>"} event is never emitted.
-            return [encode({"answer": "\n</think>\n"})]
+            # Close the region together with a language-owned status message;
+            # never emit an event whose only content is ``</think>``.
+            closing_text = (
+                "工具及中间处理已完成。\n</think>\n"
+                if response_language == "zh"
+                else "Tool and intermediate processing completed.\n</think>\n"
+            )
+            return [encode({"answer": closing_text})]
 
         tag_re = re.compile(r"</?(?:think|thinking|antThinking)\s*/?>", re.IGNORECASE)
         tag_prefixes = ("<think", "<thinking", "<antthinking", "</think", "</thinking", "</antthinking")
@@ -1387,31 +2042,51 @@ async def chat_agent_stream(request: Request):
                     if not think_closed:
                         for event in open_think():
                             yield event
-                    yield raw_event
+                    raw_text = _safe_intermediate_text(str(raw_event or ""))
+                    if raw_text:
+                        yield encode({"answer": raw_text})
                     continue
 
                 if not isinstance(payload, dict):
-                    yield raw_event
                     continue
 
                 if "final_answer" in payload:
+                    if final_seen:
+                        # The executor/callback can report completion twice;
+                        # keep one final_answer event and allow graph_data to
+                        # remain available through its dedicated event.
+                        if "graph_data" in payload:
+                            yield encode({
+                                key: value for key, value in payload.items()
+                                if key != "final_answer"
+                            })
+                        continue
                     pending_content = sanitize_answer_chunk("", flush=True)
                     if pending_content and not think_closed:
                         for event in open_think():
                             yield event
-                        yield encode({"answer": pending_content})
+                        yield encode({"answer": _safe_intermediate_text(pending_content)})
                     for event in open_think():
                         yield event
                     for event in close_think():
                         yield event
                     final_text = clean_final_answer(str(payload.get("final_answer") or "")).strip()
-                    if not final_text:
-                        final_text = (
-                            "请求已完成，但服务未生成有效的最终分析结果。"
-                            if _is_chinese(user_input)
-                            else "The request completed, but the service did not produce a valid final analysis."
+                    if _is_incomplete_agent_answer(final_text):
+                        final_text = _deterministic_final_fallback(
+                            stream_state["latest_tool_output"],
+                            stream_state["latest_tool_name"],
                         )
+                    if not final_text:
+                        final_text = _deterministic_final_fallback(
+                            stream_state["latest_tool_output"],
+                            stream_state["latest_tool_name"],
+                        )
+                    elif not _final_language_ok(final_text):
+                        final_text = _language_fallback("final")
                     payload["final_answer"] = final_text
+                    # Steps are intermediate tool content and must remain in
+                    # the single think region, never in the final event.
+                    payload.pop("steps", None)
                     payload.setdefault("is_final", True)
                     payload.setdefault("format", "markdown")
                     final_seen = True
@@ -1424,7 +2099,7 @@ async def chat_agent_stream(request: Request):
                         continue
                     for event in open_think():
                         yield event
-                    yield encode(payload)
+                    yield encode(_safe_tools_payload(payload))
                     continue
 
                 if "answer" in payload:
@@ -1432,6 +2107,7 @@ async def chat_agent_stream(request: Request):
                         app_logger.warning("[SSE] suppressed answer event after </think>")
                         continue
                     content = sanitize_answer_chunk(payload.get("answer") or "")
+                    content = _safe_intermediate_text(content)
                     if not content:
                         continue
                     for event in open_think():
@@ -1446,7 +2122,30 @@ async def chat_agent_stream(request: Request):
                     if "graph_data" in payload or payload.get("type") == "graph_data":
                         yield encode(payload)
                     continue
+                for event in open_think():
+                    yield event
                 yield encode(payload)
+            # A source that ends without an explicit final event must still
+            # close the single server-owned think region and emit a valid
+            # language-matched completion event.
+            if not final_seen:
+                pending_content = sanitize_answer_chunk("", flush=True)
+                if pending_content:
+                    for event in open_think():
+                        yield event
+                    yield encode({"answer": _safe_intermediate_text(pending_content)})
+                for event in open_think():
+                    yield event
+                for event in close_think():
+                    yield event
+                yield encode({
+                    "final_answer": _deterministic_final_fallback(
+                        stream_state["latest_tool_output"],
+                        stream_state["latest_tool_name"],
+                    ),
+                    "is_final": True,
+                    "format": "markdown",
+                })
         except Exception as exc:
             app_logger.exception("[SSE] stream normalization failed: %s", exc)
             if not final_seen:
@@ -1454,16 +2153,15 @@ async def chat_agent_stream(request: Request):
                 if pending_content:
                     for event in open_think():
                         yield event
-                    yield encode({"answer": pending_content})
+                    yield encode({"answer": _safe_intermediate_text(pending_content)})
                 for event in open_think():
                     yield event
                 for event in close_think():
                     yield event
                 yield encode({
-                    "final_answer": (
-                        "请求未完成，服务处理过程中发生异常，请稍后重试。"
-                        if _is_chinese(user_input)
-                        else "The request did not complete because the service encountered an error. Please try again."
+                    "final_answer": _deterministic_final_fallback(
+                        stream_state["latest_tool_output"],
+                        stream_state["latest_tool_name"],
                     ),
                     "is_final": True,
                     "format": "markdown",

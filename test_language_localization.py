@@ -28,6 +28,7 @@ except ImportError:
 
 from tools.free_query import _free_query_labels, _is_chinese, free_query_request
 from tools.tool_base import ToolExecutor
+from stream_formatter import contains_cjk, detect_response_language
 
 
 def _contains_cjk(value):
@@ -35,6 +36,20 @@ def _contains_cjk(value):
 
 
 class LanguageLocalizationTests(unittest.TestCase):
+    def test_request_language_ignores_technical_identifiers(self):
+        self.assertEqual(
+            detect_response_language("查询 gid19936 的 brute_force_request 记录"),
+            "zh",
+        )
+        self.assertEqual(
+            detect_response_language(
+                "What are the brute force attack records for gid 19936?"
+            ),
+            "en",
+        )
+        self.assertTrue(contains_cjk("中文"))
+        self.assertFalse(contains_cjk("English"))
+
     def test_english_request_detection_and_labels(self):
         self.assertFalse(_is_chinese("Show failed login records for today"))
         labels = _free_query_labels(False)

@@ -173,30 +173,28 @@ class CustomAsyncIteratorCallbackHandler(AsyncIteratorCallbackHandler):
                     gd = output_json["trace_info"]["graph_data"]
                     app_logger.info(f"[sever.py] graph_data type: {type(gd)}, content: {str(gd)[:500]}")
             
-            # 优先从顶层 trace_info 提取（ip_trace 工具直调场景）
-            trace_info = output_json.get("trace_info", {})
+            # 优先从顶层 trace_info 提取（ip_trace 工具直调场景）。
+            # brute_force 的 trace_info 通常只携带 ip_details，图数据在
+            # 每个 detail.graph_data 中，因此同时兼容这两种结构。
+            trace_info = output_json.get("trace_info")
+            if not isinstance(trace_info, dict):
+                trace_info = {}
 
-            # 优先从 trace_info 顶层提取 graph_data
-            if isinstance(trace_info, dict):
-                # 【修复】即使 graph_data 为空字典，也要记录，因为可能是查询结果为空
+            if trace_info.get("graph_data"):
                 graph_data = trace_info.get("graph_data")
-                if graph_data:
-                    app_logger.info(
-                        "[sever.py] 从 trace_info.graph_data 提取，"
-                        f"render_lines={len(graph_data.get('render_lines', []))}"
-                    )
-                else:
-                    app_logger.warning(f"[sever.py] trace_info.graph_data 为空，trace_info keys: {list(trace_info.keys())}")
-            # 兼容嵌套结构：从 trace_info.ip_details[0].graph_data 提取
-            elif isinstance(trace_info, dict) and trace_info.get("ip_details"):
+                app_logger.info(
+                    "[sever.py] 从 trace_info.graph_data 提取，"
+                    f"render_lines={len(graph_data.get('render_lines', []))}"
+                )
+            elif trace_info.get("ip_details"):
                 ip_details = trace_info.get("ip_details", [])
-                if isinstance(ip_details, list) and len(ip_details) > 0:
+                if isinstance(ip_details, list) and ip_details:
                     first_detail = ip_details[0]
                     if isinstance(first_detail, dict) and first_detail.get("graph_data"):
                         graph_data = first_detail.get("graph_data")
-            # 【修复】网络攻击检测 / 暴力破解返回结构中 trace_info 不在顶层，
-            # 而是 ip_details 和 ip_count 直接位于顶层。此时需要重构 trace_info。
-            elif isinstance(output_json, dict) and output_json.get("ip_details"):
+            # 网络攻击检测 / 暴力破解的兼容返回结构中，trace_info 不在顶层，
+            # 而是 ip_details 和 ip_count 直接位于顶层。此时重构 trace_info。
+            if not trace_info and isinstance(output_json, dict) and output_json.get("ip_details"):
                 trace_info = {
                     "ip_details": output_json.get("ip_details", []),
                     "ip_count": output_json.get("ip_count", 0),

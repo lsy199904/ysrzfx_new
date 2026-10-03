@@ -10,9 +10,14 @@ from typing import Iterable, Optional
 import requests
 
 from config import APP_HOST, APP_PORT
+from stream_formatter import detect_response_language
 
 
 DEFAULT_ALLOWED_GIDS = ["12345", "19936", "65789"]
+
+
+def _final_answer_title(user_input: str) -> str:
+    return "最终答案：" if detect_response_language(user_input) == "zh" else "Final Answer:"
 
 
 def _decode_line(line) -> str:
@@ -128,8 +133,11 @@ def call_and_save_stream_output(
         json_file = os.path.join(output_dir, f"stream_{timestamp}_{lang}.jsonl")
         txt_file = os.path.join(output_dir, f"stream_{timestamp}_{lang}.txt")
 
-    print(f"开始调用接口 ({lang.upper()})...")
-    print(f"问题：{user_input}")
+    response_language = detect_response_language(user_input)
+    print(f"Starting API request ({response_language.upper()})...")
+    print(
+        f"{'问题：' if response_language == 'zh' else 'Question: '}{user_input}"
+    )
     print(f"输出文件：{json_file}")
     print("-" * 60)
 
@@ -159,7 +167,7 @@ def call_and_save_stream_output(
                         print("-" * 50)
                     elif "final_answer" in data:
                         print("\n" + "=" * 50)
-                        print("最终答案：" if lang == "zh" else "Final Answer:")
+                        print(_final_answer_title(user_input))
                         print(data["final_answer"])
                     elif data.get("type") == "graph_data":
                         print("\n[graph_data event]")
@@ -231,28 +239,28 @@ FOUR_CASES = [
         "case": "a",
         "lang": "zh",
         "question": "2026年gid19936的3月26日有哪些暴力破解记录",
-        "output_file": "nofinal_answer_ch.json",
-        "expected_final_answer": False,
+        "output_file": "case_a_zh_with_data.jsonl",
+        "expected_final_answer": True,
     },
     {
         "case": "b",
         "lang": "en",
         "question": "What are the brute force attack records for gid 19936 on March 26, 2026?",
-        "output_file": "nofinal_answer_en.json",
-        "expected_final_answer": False,
+        "output_file": "case_b_en_with_data.jsonl",
+        "expected_final_answer": True,
     },
     {
         "case": "c",
         "lang": "zh",
         "question": "查询 gid 99999 的暴力破解日志",
-        "output_file": "final_answer_ch.json",
+        "output_file": "case_c_zh_denied.jsonl",
         "expected_final_answer": True,
     },
     {
         "case": "d",
         "lang": "en",
         "question": "What are the brute force attack logs for gid 99999?",
-        "output_file": "final_answer_en.json",
+        "output_file": "case_d_en_denied.jsonl",
         "expected_final_answer": True,
     },
 ]

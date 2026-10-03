@@ -19,6 +19,25 @@ _SELF_CLOSING_TAG_RE = re.compile(r"<(?:think|thinking|antThinking)\s*/>", re.IG
 _TAG_PREFIXES = ("<think", "<thinking", "<antthinking", "</think", "</thinking", "</antthinking")
 
 
+def contains_cjk(value: str) -> bool:
+    """Return whether *value* contains a CJK ideograph."""
+    return any("\u4e00" <= char <= "\u9fff" for char in str(value or ""))
+
+
+def detect_response_language(user_input: str) -> str:
+    """Detect the request language once, using the original user input only."""
+    value = str(user_input or "")
+    cjk = sum("\u4e00" <= char <= "\u9fff" for char in value)
+    # Ignore identifiers, dates, IPs, JSON-like keys, and tool names when
+    # deciding the natural-language majority (for example, ``gid19936`` or
+    # ``brute_force_request`` must not turn a Chinese question into English).
+    natural_text = re.sub(r"[A-Za-z0-9_./:@=-]+", " ", value)
+    natural_latin = sum(char.isascii() and char.isalpha() for char in natural_text)
+    if cjk and (natural_latin == 0 or cjk >= natural_latin or (cjk >= 2 and natural_latin <= 8)):
+        return "zh"
+    return "en"
+
+
 def _safe_suffix_length(value: str) -> int:
     """Return the length of a suffix that may be a split tag prefix."""
     lowered = value.lower()

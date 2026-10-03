@@ -16,7 +16,7 @@
 
 【IP 溯源功能】
 - 暴力破解检测完成后，自动提取攻击源 IP
-- 按累计占比≥80% 原则选取最多 5 个 IP
+- 按累计占比≥80% 原则选取最多 3 个 IP
 - 对每个 IP 查询完整事件范围前后各 30 分钟的活动链路
 """
 import json
@@ -62,24 +62,128 @@ COMPRESSION_CONFIG = CompressionConfig(
     max_return_data=COMPRESSION_MAX_RETURN_DATA,
 )
 
+# 自动溯源的 IP 上限。累计覆盖率规则仍然生效，但最多只对前三个
+# 排名 IP 发起 ip_trace_request，保证文字 Top3 与图数据使用同一列表。
+MAX_TRACE_IPS = 3
+COVERAGE_THRESHOLD = 0.8
+
+
+def _record_field(record: dict, *names: str):
+    """Read a flat or dotted field without changing the query field mapping."""
+    if not isinstance(record, dict):
+        return None
+    for name in names:
+        if name in record and record[name] not in (None, ""):
+            return record[name]
+        value = record
+        for part in name.split("."):
+            if not isinstance(value, dict) or part not in value:
+                value = None
+                break
+            value = value[part]
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _is_brute_force_detection_hit(record: dict) -> bool:
+    """Return whether a record satisfies the brute-force PPL condition.
+
+    ToolExecutor normally returns only records matching ``PPL_TEMPLATE``.  The
+    field-less fallback keeps synthetic/legacy unit fixtures compatible while
+    still classifying mixed trace records accurately when the condition fields
+    are present.
+    """
+    if not isinstance(record, dict):
+        return False
+    subtype = _record_field(record, "fortinet.firewall.subtype", "subtype")
+    action = _record_field(record, "event.action", "action")
+    status = _record_field(record, "fortinet.firewall.status", "status")
+    message = _record_field(record, "message", "msg")
+    reason = _record_field(record, "event.reason", "reason")
+    source_ip = _record_field(record, "source.ip", "srcip")
+    condition_fields_present = any(
+        value not in (None, "")
+        for value in (subtype, action, status, message, reason, source_ip)
+    )
+    if not condition_fields_present:
+        return True
+    if str(reason or "").strip().lower() == "ip_blocked":
+        return False
+    if str(source_ip or "").strip() == "218.92.0.39":
+        return False
+    system_login_failed = (
+        str(subtype or "").strip().lower() == "system"
+        and str(action or "").strip().lower() == "login"
+        and str(status or "").strip().lower() == "failed"
+    )
+    vpn_login_failed = (
+        str(subtype or "").strip().lower() == "vpn"
+        and str(message or "").strip() == "SSL user failed to logged in"
+    )
+    return system_login_failed or vpn_login_failed
+
+
+def _ip_attack_count(raw_result: dict, target_ip: str) -> int:
+    """Return the complete brute-force hit count for one selected IP."""
+    stats = raw_result.get("ip_stats") if isinstance(raw_result, dict) else None
+    if isinstance(stats, list):
+        for item in stats:
+            if isinstance(item, dict) and str(item.get("ip")) == str(target_ip):
+                try:
+                    return int(item.get("count", 0) or 0)
+                except (TypeError, ValueError):
+                    return 0
+    count = 0
+    for record in (raw_result.get("data", []) if isinstance(raw_result, dict) else []):
+        if not _is_brute_force_detection_hit(record):
+            continue
+        ip = _record_field(record, "attack_src", "source.ip", "srcip", "destination.ip")
+        if str(ip) == str(target_ip):
+            count += 1
+    return count
+
 
 def _calculate_ip_priority(raw_result: dict) -> list:
     """
-    根据攻击次数计算 IP 优先级，选取累计占比≥80% 的 IP（最多 5 个）
+    根据暴力破解命中次数计算 IP 优先级，选取累计占比≥80% 的 IP（最多 3 个）。
+
+    ``ip_stats`` 是查询结果生成的完整统计时优先使用它，避免在未来
+    返回样本数据时误用 ``data[:N]`` 推断排名；没有统计字段时才从原始
+    命中记录回退计算。
     """
     try:
         data = raw_result.get("data", [])
         logger.info(f"[IP Priority] 开始计算 IP 优先级，原始数据条数: {len(data)}")
-        if not data:
-            logger.warning("[IP Priority] 未检测到数据，跳过 IP 优先级计算")
-            return []
-        
-        # 统计每个 IP 的出现次数
+
+        # 统计字段由工具查询结果提供，顺序就是报告 Top3 的稳定顺序。
         ip_counts = {}
-        for record in data:
-            ip = record.get("attack_src") or record.get("source.ip") or record.get("destination.ip")
-            if ip:
-                ip_counts[ip] = ip_counts.get(ip, 0) + 1
+        stats = raw_result.get("ip_stats")
+        if isinstance(stats, list):
+            for item in stats:
+                if not isinstance(item, dict):
+                    continue
+                ip = item.get("ip")
+                try:
+                    count = int(item.get("count", 0) or 0)
+                except (TypeError, ValueError):
+                    count = 0
+                if ip and count > 0:
+                    ip_counts[str(ip)] = count
+
+        if not ip_counts:
+            if not data:
+                logger.warning("[IP Priority] 未检测到数据，跳过 IP 优先级计算")
+                return []
+            # ToolExecutor 的 brute-force 结果本应已经是 PPL 命中记录；
+            # 这里仍按条件判定，避免混入溯源上下文记录。
+            for record in data:
+                if not _is_brute_force_detection_hit(record):
+                    continue
+                ip = _record_field(record, "attack_src", "source.ip", "srcip", "destination.ip")
+                if ip:
+                    ip = str(ip)
+                    ip_counts[ip] = ip_counts.get(ip, 0) + 1
         
         logger.info(f"[IP Priority] 统计到的 IP 分布: {ip_counts}")
         
@@ -87,23 +191,20 @@ def _calculate_ip_priority(raw_result: dict) -> list:
             logger.warning("[IP Priority] 未找到有效的 IP 字段")
             return []
         
-        # 按次数降序排序
+        # 按次数降序排序；Python 的稳定排序保留统计结果中的并列顺序。
         sorted_ips = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)
 
-        # 【保留原阈值】累计 ≥80% 或最多 5 个 IP（兜底）
-        # 即便均匀分布永远到不了 80%，也会至少取 5 个 IP 作为兜底
+        # 保留累计覆盖率规则，但最多只选前三个 IP。
         total = sum(ip_counts.values())
         cumulative = 0
         trace_ips = []
-        MAX_TRACE_IPS = 5
-        COVERAGE_THRESHOLD = 0.8
 
         logger.info(f"[IP Priority] 数据统计: 共 {len(sorted_ips)} 个 unique IP，总攻击 {total} 次")
         for ip, count in sorted_ips:
             cumulative += count / total
             trace_ips.append(ip)
             logger.info(f"[IP Priority] 已收录 IP {ip} (累计占比: {cumulative:.2%})")
-            # 达到 80% 阈值 OR 达到兜底数量（5 个）即停止
+            # 达到 80% 阈值 OR 达到前三个上限即停止。
             if cumulative >= COVERAGE_THRESHOLD or len(trace_ips) >= MAX_TRACE_IPS:
                 logger.info(f"[IP Priority] 达到阈值 (≥80% 或 ≥{MAX_TRACE_IPS}个)，停止选取")
                 break
@@ -124,12 +225,17 @@ def _get_first_attack_time(raw_result: dict) -> str | None:
             logger.warning("[Trace] 数据为空，没有有效攻击时间")
             return None
 
-        # 数据已经按时间降序排序，取最后一条即为最早
-        first_record = data[-1]
-        attack_time = first_record.get("@timestamp")
+        timestamps = []
+        for record in data:
+            if not _is_brute_force_detection_hit(record):
+                continue
+            attack_time = record.get("@timestamp_cst") or record.get("@timestamp")
+            normalized_time = _normalize_attack_time(attack_time) if attack_time else ""
+            if normalized_time:
+                timestamps.append((normalized_time, attack_time))
 
-        if attack_time:
-            normalized_time = _normalize_attack_time(attack_time)
+        if timestamps:
+            normalized_time, attack_time = min(timestamps, key=lambda item: item[0])
             logger.info(f"[Trace] 提取到最早攻击时间: {attack_time} → {normalized_time}")
             return normalized_time
 
@@ -149,19 +255,21 @@ def _get_ip_first_attack_time(raw_result: dict, target_ip: str) -> str | None:
             logger.warning(f"[Trace] 数据为空，IP {target_ip} 没有有效攻击时间")
             return None
 
-        # 数据按时间降序排列，遍历找该 IP 的最早一条（即最后匹配的那条）
         ip_first_time = None
         for record in data:
-            ip = record.get("attack_src") or record.get("source.ip") or record.get("destination.ip")
+            if not _is_brute_force_detection_hit(record):
+                continue
+            ip = _record_field(record, "attack_src", "source.ip", "srcip", "destination.ip")
             if ip == target_ip:
-                t = record.get("@timestamp")
+                t = record.get("@timestamp_cst") or record.get("@timestamp")
                 if t:
-                    ip_first_time = t  # 不断覆盖，最后保留的是最早的
+                    normalized = _normalize_attack_time(t)
+                    if normalized and (not ip_first_time or normalized < ip_first_time):
+                        ip_first_time = normalized
 
         if ip_first_time:
-            normalized_time = _normalize_attack_time(ip_first_time)
-            logger.info(f"[Trace] IP {target_ip} 的最早攻击时间: {ip_first_time} → {normalized_time}")
-            return normalized_time
+            logger.info(f"[Trace] IP {target_ip} 的最早攻击时间: {ip_first_time}")
+            return ip_first_time
 
         logger.warning(f"[Trace] IP {target_ip} 没有有效 @timestamp，跳过自动溯源")
         return None
@@ -177,10 +285,14 @@ def _get_ip_attack_time_range(raw_result: dict, target_ip: str) -> tuple[str, st
         for record in raw_result.get("data", []):
             if not isinstance(record, dict):
                 continue
-            ip = record.get("attack_src") or record.get("source.ip") or record.get("destination.ip")
-            timestamp = record.get("@timestamp")
+            if not _is_brute_force_detection_hit(record):
+                continue
+            ip = _record_field(record, "attack_src", "source.ip", "srcip", "destination.ip")
+            timestamp = record.get("@timestamp_cst") or record.get("@timestamp")
             if ip == target_ip and timestamp:
-                timestamps.append(_normalize_attack_time(timestamp))
+                normalized = _normalize_attack_time(timestamp)
+                if normalized:
+                    timestamps.append(normalized)
 
         timestamps = [timestamp for timestamp in timestamps if timestamp]
         if timestamps:
@@ -208,15 +320,16 @@ def _auto_trace_brute_force_ips(raw_result: dict, start_time: str, end_time: str
             return {
                 "status": "success",
                 "message": "未检测到攻击源 IP，无需溯源",
+                "trace_ips": [],
                 "ip_details": []
             }
         
         # 每个 IP 使用完整的攻击时间范围，而非仅最早一条记录。
         logger.info(f"[Trace] 开始对 {len(trace_ips)} 个 IP 执行溯源查询（每个 IP 独立时间窗口）")
 
-        # 对每个 IP 执行溯源查询
+        # 对每个 IP 执行溯源查询。ip_details 的顺序与 Top3 排名完全一致。
         ip_details = []
-        for ip in trace_ips:
+        for rank, ip in enumerate(trace_ips, 1):
             try:
                 # 覆盖最早攻击前 30 分钟至最晚攻击后 30 分钟，避免
                 # 漏掉同一 IP 在当天后续发生的攻击、锁定或拦截记录。
@@ -224,6 +337,9 @@ def _auto_trace_brute_force_ips(raw_result: dict, start_time: str, end_time: str
                 if not ip_first_time or not ip_last_time:
                     ip_details.append({
                         "ip": ip,
+                        "rank": rank,
+                        "brute_force_count": _ip_attack_count(raw_result, ip),
+                        "trace_event_count": 0,
                         "status": "skipped",
                         "message": "缺少有效 @timestamp，未执行自动溯源",
                     })
@@ -242,12 +358,47 @@ def _auto_trace_brute_force_ips(raw_result: dict, start_time: str, end_time: str
                     end_time=ip_window["end_time"],
                     gid=gid,
                 )
-                ip_details.append(trace_result.get("trace_info", {}))
-                logger.info(f"[Trace] IP {ip} 溯源查询完成，状态: {trace_result.get('trace_info', {}).get('status')}")
+                detail = trace_result.get("trace_info", {})
+                if not isinstance(detail, dict):
+                    detail = {}
+                graph_data = detail.get("graph_data")
+                if not isinstance(graph_data, dict):
+                    graph_data = {}
+                render_lines = graph_data.get("render_lines", [])
+                trace_event_count = sum(
+                    int(line.get("count", 0) or 0)
+                    for line in render_lines
+                    if isinstance(line, dict)
+                )
+                brute_force_count = _ip_attack_count(raw_result, ip)
+                # Keep metadata both on the per-IP detail (for SSE graph wrappers)
+                # and inside graph_data (for frontend graph consumers).
+                graph_data.update({
+                    "ip": ip,
+                    "rank": rank,
+                    "brute_force_count": brute_force_count,
+                    "trace_event_count": trace_event_count,
+                    "time_window": f"{ip_window['start_time']} ~ {ip_window['end_time']}",
+                })
+                detail.update({
+                    "ip": ip,
+                    "rank": rank,
+                    "brute_force_count": brute_force_count,
+                    "trace_event_count": trace_event_count,
+                    "time_window": f"{ip_window['start_time']} ~ {ip_window['end_time']}",
+                    "start_time": ip_window["start_time"],
+                    "end_time": ip_window["end_time"],
+                    "graph_data": graph_data,
+                })
+                ip_details.append(detail)
+                logger.info(f"[Trace] IP {ip} 溯源查询完成，状态: {detail.get('status')}")
             except Exception as e:
                 logger.error(f"[Trace] IP {ip} 溯源查询失败: {e}", exc_info=True)
                 ip_details.append({
                     "ip": ip,
+                    "rank": rank,
+                    "brute_force_count": _ip_attack_count(raw_result, ip),
+                    "trace_event_count": 0,
                     "status": "error",
                     "message": f"溯源查询失败：{str(e)}"
                 })
@@ -269,9 +420,46 @@ def _auto_trace_brute_force_ips(raw_result: dict, start_time: str, end_time: str
         else:
             overall_window = "未提供"
 
+        # Keep the exact selected list (which may contain fewer than three IPs
+        # when the 80% coverage threshold is reached early) alongside its
+        # complete statistics.  Consumers must use this list for both the
+        # textual Top-N section and graph_data.graphs.
+        stats_by_ip = {}
+        raw_stats = raw_result.get("ip_stats") if isinstance(raw_result, dict) else None
+        if isinstance(raw_stats, list):
+            for item in raw_stats:
+                if isinstance(item, dict) and item.get("ip"):
+                    stats_by_ip[str(item["ip"])] = dict(item)
+        total_attack_count = sum(
+            int(item.get("count", 0) or 0)
+            for item in stats_by_ip.values()
+            if isinstance(item, dict)
+        )
+        if not total_attack_count:
+            total_attack_count = sum(
+                1
+                for record in (raw_result.get("data", []) if isinstance(raw_result, dict) else [])
+                if _is_brute_force_detection_hit(record)
+            )
+        trace_ip_stats = []
+        for ip in trace_ips:
+            stat = dict(stats_by_ip.get(str(ip), {}))
+            stat["ip"] = ip
+            try:
+                stat["count"] = int(stat.get("count", 0) or 0)
+            except (TypeError, ValueError):
+                stat["count"] = _ip_attack_count(raw_result, ip)
+            if "percentage" not in stat:
+                stat["percentage"] = round(
+                    stat["count"] * 100 / total_attack_count, 1
+                ) if total_attack_count else 0.0
+            trace_ip_stats.append(stat)
+
         result = {
             "status": "success",
             "ip_count": len(ip_details),
+            "trace_ips": trace_ips,
+            "trace_ip_stats": trace_ip_stats,
             "time_window": overall_window,
             "ip_details": ip_details
         }
@@ -338,6 +526,13 @@ def brute_force_request(
             }
         }, ensure_ascii=False)
     
+    # 先计算完整查询统计，再用同一份统计选择 Top3 溯源 IP；这样文字
+    # 摘要和 graph_data 不会因为 data 样本或调用顺序产生不同排名。
+    raw_result["ip_stats"] = calculate_ip_stats(
+        raw_result.get("data", []),
+        ip_field="attack_src"
+    )
+
     # 自动触发溯源查询
     try:
         trace_info = _auto_trace_brute_force_ips(raw_result, start_time, end_time, gid)
@@ -351,12 +546,6 @@ def brute_force_request(
     
     # 将溯源信息追加到结果中
     raw_result["trace_info"] = trace_info
-    
-    # 附加 IP 统计信息（预计算每个 IP 的出现次数和占比，供 LLM 直接读取）
-    raw_result["ip_stats"] = calculate_ip_stats(
-        raw_result.get("data", []),
-        ip_field="attack_src"
-    )
     
     # 返回最终结果
     return json.dumps(raw_result, ensure_ascii=False)

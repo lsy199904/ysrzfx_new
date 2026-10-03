@@ -3,7 +3,7 @@ import json
 import logging
 from langchain.agents import Tool, AgentOutputParser
 from langchain.prompts import StringPromptTemplate
-from typing import List
+from typing import ClassVar, List
 from langchain.schema import AgentAction, AgentFinish
 from pydantic.schema import model_schema
 
@@ -127,10 +127,35 @@ def compact_observation_for_llm(observation: str) -> str:
             }
             ip_stats = parsed.get("ip_stats")
             if isinstance(ip_stats, list):
+                trace_info = parsed.get("trace_info")
+                trace_info = trace_info if isinstance(trace_info, dict) else {}
+                selected_ips = [
+                    str(ip) for ip in trace_info.get("trace_ips", [])
+                    if ip not in (None, "")
+                ]
+                selected_stats = trace_info.get("trace_ip_stats")
+                stats_by_ip = {
+                    str(item.get("ip")): item
+                    for item in ip_stats
+                    if isinstance(item, dict) and item.get("ip")
+                }
+                selected_stats_by_ip = {
+                    str(item.get("ip")): item
+                    for item in (selected_stats if isinstance(selected_stats, list) else [])
+                    if isinstance(item, dict) and item.get("ip")
+                }
+                report_stats = (
+                    [
+                        selected_stats_by_ip.get(ip) or stats_by_ip.get(ip) or {"ip": ip}
+                        for ip in selected_ips
+                    ]
+                    if selected_ips else ip_stats[:3]
+                )
                 projected["ip_summary"] = {
                     "total_records": parsed.get("count", 0),
                     "unique_ip_count": len(ip_stats),
-                    "top3": ip_stats[:3],
+                    "top3": report_stats,
+                    "selected_trace_ips": selected_ips,
                 }
             compression = parsed.get("compression")
             if isinstance(compression, dict):
@@ -147,16 +172,37 @@ def compact_observation_for_llm(observation: str) -> str:
             if isinstance(ip_stats, list):
                 records = parsed.get("data")
                 if isinstance(records, list) and ip_stats:
-                    top_ips = {
+                    ordered_ips = selected_ips or [
                         str(item.get("ip"))
                         for item in ip_stats[:3]
                         if isinstance(item, dict) and item.get("ip")
-                    }
-                    if top_ips:
-                        projected["top_ip_records"] = [
-                            record for record in records
-                            if _prompt_ip(record) in top_ips
-                        ][:30]
+                    ]
+                    records_by_ip = {ip: [] for ip in ordered_ips}
+                    for record in records:
+                        record_ip = _prompt_ip(record)
+                        if record_ip in records_by_ip:
+                            records_by_ip[record_ip].append(record)
+
+                    # Keep a balanced sample for every selected IP.  A global
+                    # ``[:30]`` can be consumed entirely by the highest-volume
+                    # source and leave the second/third timeline without any
+                    # real event details.  Preserve each IP's earliest/latest
+                    # records while staying within the same 30-record budget.
+                    top_ip_records = []
+                    for ip in ordered_ips:
+                        ip_records = sorted(
+                            records_by_ip.get(ip, []),
+                            key=lambda record: str(
+                                _prompt_field(record, "@timestamp_cst")
+                                or _prompt_field(record, "@timestamp")
+                                or ""
+                            ),
+                        )
+                        if len(ip_records) > 10:
+                            ip_records = ip_records[:5] + ip_records[-5:]
+                        top_ip_records.extend(ip_records)
+                    if top_ip_records:
+                        projected["top_ip_records"] = top_ip_records
 
             if "data" in parsed:
                 projected["data_sample"] = (
@@ -189,6 +235,20 @@ class CustomPromptTemplate(StringPromptTemplate):
     """
     template: str
     tools: List[Tool]
+    # The tool catalog is part of the model-visible prompt.  Keep an English
+    # catalog separate from the existing Chinese descriptions so an English
+    # request never receives mixed-language instructions.
+    language: str = "zh"
+
+    _EN_TOOL_DESCRIPTIONS: ClassVar[dict[str, str]] = {
+        "alert_rule_request": "Query alert-rule results.",
+        "brute_force_request": "Query FortiGate failed-login and brute-force records.",
+        "account_security_monitor_request": "Query account creation, deletion, and permission changes.",
+        "network_attack_request": "Query IPS and network-attack records.",
+        "system_security_request": "Query system security and device configuration events.",
+        "free_query_request": "Run a user-defined log query with PPL.",
+        "ip_trace_request": "Trace activity associated with a source IP.",
+    }
 
     def format(self, **kwargs) -> str:
         intermediate_steps = kwargs.pop("intermediate_steps")
@@ -211,11 +271,27 @@ class CustomPromptTemplate(StringPromptTemplate):
             _properties = _tool_schema.get('properties', {})
             _schema = {}
             for _input_name in _properties.keys():
-                _schema[_input_name] = _properties[_input_name]['description']
+                _schema[_input_name] = _properties[_input_name].get('description', '')
             return _schema
 
-        kwargs["tools"] = "\n\n".join(
-            [f"{tool.name}: {tool.description} ; input args: {_fetch_tool_input_schema(tool)}" for tool in self.tools])
+        tool_lines = []
+        for tool in self.tools:
+            schema = _fetch_tool_input_schema(tool)
+            if self.language == "en":
+                # Do not expose the Chinese descriptions/field descriptions
+                # embedded in the tool definitions to an English request.
+                arg_names = ", ".join(schema.keys()) or "JSON object"
+                description = self._EN_TOOL_DESCRIPTIONS.get(
+                    tool.name, "Run the selected security query tool."
+                )
+                tool_lines.append(
+                    f"{tool.name}: {description} Input fields: {arg_names}"
+                )
+            else:
+                tool_lines.append(
+                    f"{tool.name}: {tool.description} ; input args: {schema}"
+                )
+        kwargs["tools"] = "\n\n".join(tool_lines)
         kwargs["tool_names"] = ", ".join([tool.name for tool in self.tools])
         return self.template.format(**kwargs)
 

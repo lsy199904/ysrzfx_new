@@ -2,6 +2,11 @@ import json
 import requests
 import time
 from config import APP_HOST, APP_PORT
+from stream_formatter import detect_response_language
+
+
+def _final_answer_title(user_input):
+    return "最终答案：" if detect_response_language(user_input) == "zh" else "Final Answer:"
 
 def call_agent_stream_api(session_id, user_input):
     start_time = time.time()
@@ -70,7 +75,7 @@ def call_agent_stream_api(session_id, user_input):
 
                         elif "final_answer" in data:
                             print("\n" + "="*50)
-                            print("最终答案：")
+                            print(_final_answer_title(user_input))
                             print(data["final_answer"])
                     except json.JSONDecodeError:
                         continue
@@ -161,7 +166,7 @@ def call_agent_stream_api_with_auth(session_id, user_input, login_account="test"
 
                         elif "final_answer" in data:
                             print("\n" + "="*50)
-                            print("最终答案：")
+                            print(_final_answer_title(user_input))
                             print(data["final_answer"])
                     except json.JSONDecodeError:
                         continue

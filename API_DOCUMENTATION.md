@@ -33,7 +33,7 @@ curl -X POST http://192.168.101.110:5050/agentchat \
 
 | 事件类型 | 响应示例 | 说明 |
 |---------|---------|------|
-| `answer` | `{"answer": "<think>"}` / `{"answer": "分析用户问题"}` / `{"answer": "</think>"}` | 思考过程增量；开始和结束使用 `<think>` / `</think>` 标记 |
+| `answer` | `{"answer": "<think>\n"}` / `{"answer": "正在处理工具结果..."}` / `{"answer": "工具及中间处理已完成。\n</think>\n"}` | 服务端统一管理的思考区域；普通中间状态和工具过程都位于同一个 `<think>...</think>` 区域，关闭事件不会只包含 `</think>` |
 | `tools` | `{"tools": ["调用工具：xxx"]}` | 工具调用信息 |
 | `final_answer` | `{"final_answer": "**查询结果**...", "is_final": true, "format": "markdown"}` | 清理思考标签后的正式答案；前端应按 Markdown 渲染并对最终答案区域加粗 |
 | `error` | `{"error": "错误信息"}` | 错误信息 |
@@ -41,20 +41,22 @@ curl -X POST http://192.168.101.110:5050/agentchat \
 ## 响应示例
 
 ```
-data: {"answer": "<think>"}
+data: {"answer": "<think>\n"}
 
 data: {"answer": "分析用户问题并选择工具"}
 
-data: {"answer": "</think>"}
-
 data: {"tools": ["调用工具：free_query_request"]}
+
+data: {"answer": "工具及中间处理已完成。\n</think>\n"}
 
 data: {"final_answer": "**查询结果**\n\n- 总记录数：10 条\n- 关键发现：...", "is_final": true, "format": "markdown"}
 ```
 
-> 兼容说明：服务端仍使用 `answer` 字段，但只发送经过边界标记的思考内容，不发送未经处理的 Action/Observation。前端遇到 `<think>` 后进入思考区域，遇到 `</think>` 后结束思考区域；收到 `final_answer` 后渲染正式答案。
+> 兼容说明：服务端仍使用 `answer` 字段，但不会透传模型的原始长思考。前端遇到包含 `<think>` 的事件后进入思考区域，遇到包含 `</think>` 的事件后结束思考区域；所有 `tools` 事件都出现在关闭标签之前，收到 `final_answer` 后渲染正式答案。
 
-图谱事件中的 `graph_data` 继续保留原有 `nodes`、`edges`、`stats` 字段，并新增 `render_lines`。`render_lines` 是供双通道/时序线路图使用的聚合路径，包含 `line_id`、`direction`、`count`、`status`、`steps`，下行流量线路可能额外包含 `details.destination_ip` 和 `details.destination_port`。
+暴力破解自动溯源完成后会发送独立的 `type=graph_data` 事件。`graphs` 最多包含累计覆盖率达到 80% 所需的前三个攻击源，顺序与文字报告完全一致；每个图包含 `ip`、`rank`、`brute_force_count`、`trace_event_count`、`time_window` 和仅用于绘图的 `graph_data.render_lines`。
+
+每条 `render_line` 包含 `line_id`、`direction`、`count`、`status`、`event_role`、`steps`，并可包含 `first_seen`、`last_seen` 和 `details`。`event_role=detection_hit` 表示满足原始暴力破解检测条件，前端可使用高亮实线；`event_role=trace_context` 表示同一 IP、同一独立溯源窗口内的其他真实关联活动，前端可使用浅色或虚线。默认可只展示检测命中和高风险上下文，展开后显示窗口内全部线路。该图表达的是“Source IP Activity Trace / 关联活动溯源”，不表示所有上下文活动都由暴力破解直接导致。
 
 ---
 
