@@ -1,0 +1,746 @@
+[
+  {
+    "@timestamp": "2026-03-24T16:42:00Z",
+    "@gid": "19935",
+    "message": "2026-03-24T16:42:00Z 10.35.2.10 date=2026-03-24 time=16:42:00 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=config action=Add user=admin srcip=10.35.2.10 status=success srccountry=China cfgpath=user.local cfgobj=user_local_admin_00 ui=\"Admin Console (10.35.2.10)\" logdesc=\"Local user added\" msg=\"Local user admin has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin_00",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T17:25:13Z",
+    "@gid": "19935",
+    "message": "2026-03-24T17:25:13Z 10.35.2.11 date=2026-03-24 time=17:25:13 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=config action=Delete user=chen_ming srcip=10.35.2.11 status=success srccountry=China cfgpath=user.local cfgobj=user_local_chen_ming_01 ui=\"Admin Console (10.35.2.11)\" logdesc=\"User account removed\" msg=\"Local user chen_ming has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "chen_ming"
+      }
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_chen_ming_01",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T18:08:26Z",
+    "@gid": "19935",
+    "message": "2026-03-24T18:08:26Z 198.51.100.60 date=2026-03-24 time=18:08:26 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=config action=Add user=li_si srcip=198.51.100.60 status=success srccountry=China cfgpath=user.local cfgobj=user_local_li_si_02 ui=\"Admin Console (198.51.100.60)\" logdesc=\"Local user added\" msg=\"Local user li_si has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "li_si"
+      }
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si_02",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T18:51:39Z",
+    "@gid": "19935",
+    "message": "2026-03-24T18:51:39Z 10.35.2.10 date=2026-03-24 time=18:51:39 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=config action=Delete user=db_admin srcip=10.35.2.10 status=success srccountry=China cfgpath=user.local cfgobj=user_local_db_admin_03 ui=\"Admin Console (10.35.2.10)\" logdesc=\"User account removed\" msg=\"Local user db_admin has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_db_admin_03",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T19:34:52Z",
+    "@gid": "19935",
+    "message": "2026-03-24T19:34:52Z 10.35.2.11 date=2026-03-24 time=19:34:52 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=config action=Add user=backup_user srcip=10.35.2.11 status=success srccountry=China cfgpath=user.local cfgobj=user_local_backup_user_04 ui=\"Admin Console (10.35.2.11)\" logdesc=\"Local user added\" msg=\"Local user backup_user has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_backup_user_04",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T20:17:05Z",
+    "@gid": "19935",
+    "message": "2026-03-24T20:17:05Z 198.51.100.60 date=2026-03-24 time=20:17:05 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=config action=Delete user=admin srcip=198.51.100.60 status=success srccountry=China cfgpath=user.local cfgobj=user_local_admin_05 ui=\"Admin Console (198.51.100.60)\" logdesc=\"User account removed\" msg=\"Local user admin has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin_05",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T21:00:18Z",
+    "@gid": "19935",
+    "message": "2026-03-24T21:00:18Z 10.35.2.10 date=2026-03-24 time=21:00:18 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=config action=Add user=chen_ming srcip=10.35.2.10 status=success srccountry=China cfgpath=user.local cfgobj=user_local_chen_ming_06 ui=\"Admin Console (10.35.2.10)\" logdesc=\"Local user added\" msg=\"Local user chen_ming has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "chen_ming"
+      }
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_chen_ming_06",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T21:43:31Z",
+    "@gid": "19935",
+    "message": "2026-03-24T21:43:31Z 10.35.2.11 date=2026-03-24 time=21:43:31 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=config action=Delete user=li_si srcip=10.35.2.11 status=success srccountry=China cfgpath=user.local cfgobj=user_local_li_si_07 ui=\"Admin Console (10.35.2.11)\" logdesc=\"User account removed\" msg=\"Local user li_si has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "li_si"
+      }
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si_07",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T22:26:44Z",
+    "@gid": "19935",
+    "message": "2026-03-24T22:26:44Z 198.51.100.60 date=2026-03-24 time=22:26:44 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=config action=Add user=db_admin srcip=198.51.100.60 status=success srccountry=China cfgpath=user.local cfgobj=user_local_db_admin_08 ui=\"Admin Console (198.51.100.60)\" logdesc=\"Local user added\" msg=\"Local user db_admin has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_db_admin_08",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T23:09:57Z",
+    "@gid": "19935",
+    "message": "2026-03-24T23:09:57Z 10.35.2.10 date=2026-03-24 time=23:09:57 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=config action=Delete user=backup_user srcip=10.35.2.10 status=success srccountry=China cfgpath=user.local cfgobj=user_local_backup_user_09 ui=\"Admin Console (10.35.2.10)\" logdesc=\"User account removed\" msg=\"Local user backup_user has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_backup_user_09",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T23:52:10Z",
+    "@gid": "19935",
+    "message": "2026-03-24T23:52:10Z 10.35.2.11 date=2026-03-24 time=23:52:10 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=config action=Add user=admin srcip=10.35.2.11 status=success srccountry=China cfgpath=user.local cfgobj=user_local_admin_10 ui=\"Admin Console (10.35.2.11)\" logdesc=\"Local user added\" msg=\"Local user admin has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin_10",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T00:35:23Z",
+    "@gid": "19935",
+    "message": "2026-03-25T00:35:23Z 198.51.100.60 date=2026-03-25 time=00:35:23 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=config action=Delete user=chen_ming srcip=198.51.100.60 status=success srccountry=China cfgpath=user.local cfgobj=user_local_chen_ming_11 ui=\"Admin Console (198.51.100.60)\" logdesc=\"User account removed\" msg=\"Local user chen_ming has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "chen_ming"
+      }
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_chen_ming_11",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T01:18:36Z",
+    "@gid": "19935",
+    "message": "2026-03-25T01:18:36Z 10.35.2.10 date=2026-03-25 time=01:18:36 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=config action=Add user=li_si srcip=10.35.2.10 status=success srccountry=China cfgpath=user.local cfgobj=user_local_li_si_12 ui=\"Admin Console (10.35.2.10)\" logdesc=\"Local user added\" msg=\"Local user li_si has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "li_si"
+      }
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si_12",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T02:01:49Z",
+    "@gid": "19935",
+    "message": "2026-03-25T02:01:49Z 10.35.2.11 date=2026-03-25 time=02:01:49 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=config action=Delete user=db_admin srcip=10.35.2.11 status=success srccountry=China cfgpath=user.local cfgobj=user_local_db_admin_13 ui=\"Admin Console (10.35.2.11)\" logdesc=\"User account removed\" msg=\"Local user db_admin has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_db_admin_13",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T02:44:02Z",
+    "@gid": "19935",
+    "message": "2026-03-25T02:44:02Z 198.51.100.60 date=2026-03-25 time=02:44:02 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=config action=Add user=backup_user srcip=198.51.100.60 status=success srccountry=China cfgpath=user.local cfgobj=user_local_backup_user_14 ui=\"Admin Console (198.51.100.60)\" logdesc=\"Local user added\" msg=\"Local user backup_user has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_backup_user_14",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T03:27:15Z",
+    "@gid": "19935",
+    "message": "2026-03-25T03:27:15Z 10.35.2.10 date=2026-03-25 time=03:27:15 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=config action=Delete user=admin srcip=10.35.2.10 status=success srccountry=China cfgpath=user.local cfgobj=user_local_admin_15 ui=\"Admin Console (10.35.2.10)\" logdesc=\"User account removed\" msg=\"Local user admin has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin_15",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T04:10:28Z",
+    "@gid": "19935",
+    "message": "2026-03-25T04:10:28Z 10.35.2.11 date=2026-03-25 time=04:10:28 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=config action=Add user=chen_ming srcip=10.35.2.11 status=success srccountry=China cfgpath=user.local cfgobj=user_local_chen_ming_16 ui=\"Admin Console (10.35.2.11)\" logdesc=\"Local user added\" msg=\"Local user chen_ming has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "chen_ming"
+      }
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_chen_ming_16",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T04:53:41Z",
+    "@gid": "19935",
+    "message": "2026-03-25T04:53:41Z 198.51.100.60 date=2026-03-25 time=04:53:41 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=config action=Delete user=li_si srcip=198.51.100.60 status=success srccountry=China cfgpath=user.local cfgobj=user_local_li_si_17 ui=\"Admin Console (198.51.100.60)\" logdesc=\"User account removed\" msg=\"Local user li_si has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "li_si"
+      }
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si_17",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T05:36:54Z",
+    "@gid": "19935",
+    "message": "2026-03-25T05:36:54Z 10.35.2.10 date=2026-03-25 time=05:36:54 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=config action=Add user=db_admin srcip=10.35.2.10 status=success srccountry=China cfgpath=user.local cfgobj=user_local_db_admin_18 ui=\"Admin Console (10.35.2.10)\" logdesc=\"Local user added\" msg=\"Local user db_admin has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_db_admin_18",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T06:19:07Z",
+    "@gid": "19935",
+    "message": "2026-03-25T06:19:07Z 10.35.2.11 date=2026-03-25 time=06:19:07 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=config action=Delete user=backup_user srcip=10.35.2.11 status=success srccountry=China cfgpath=user.local cfgobj=user_local_backup_user_19 ui=\"Admin Console (10.35.2.11)\" logdesc=\"User account removed\" msg=\"Local user backup_user has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_backup_user_19",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T07:02:20Z",
+    "@gid": "19935",
+    "message": "2026-03-25T07:02:20Z 198.51.100.60 date=2026-03-25 time=07:02:20 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=config action=Add user=admin srcip=198.51.100.60 status=success srccountry=China cfgpath=user.local cfgobj=user_local_admin_20 ui=\"Admin Console (198.51.100.60)\" logdesc=\"Local user added\" msg=\"Local user admin has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin_20",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T07:45:33Z",
+    "@gid": "19935",
+    "message": "2026-03-25T07:45:33Z 10.35.2.10 date=2026-03-25 time=07:45:33 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=config action=Delete user=chen_ming srcip=10.35.2.10 status=success srccountry=China cfgpath=user.local cfgobj=user_local_chen_ming_21 ui=\"Admin Console (10.35.2.10)\" logdesc=\"User account removed\" msg=\"Local user chen_ming has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "chen_ming"
+      }
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_chen_ming_21",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T08:28:46Z",
+    "@gid": "19935",
+    "message": "2026-03-25T08:28:46Z 10.35.2.11 date=2026-03-25 time=08:28:46 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=config action=Add user=li_si srcip=10.35.2.11 status=success srccountry=China cfgpath=user.local cfgobj=user_local_li_si_22 ui=\"Admin Console (10.35.2.11)\" logdesc=\"Local user added\" msg=\"Local user li_si has been added\"",
+    "event": {
+      "action": "Add"
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "li_si"
+      }
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Local user added"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si_22",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T09:11:59Z",
+    "@gid": "19935",
+    "message": "2026-03-25T09:11:59Z 198.51.100.60 date=2026-03-25 time=09:11:59 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=config action=Delete user=db_admin srcip=198.51.100.60 status=success srccountry=China cfgpath=user.local cfgobj=user_local_db_admin_23 ui=\"Admin Console (198.51.100.60)\" logdesc=\"User account removed\" msg=\"Local user db_admin has been deleted\"",
+    "event": {
+      "action": "Delete"
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "User account removed"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_db_admin_23",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China",
+        "status": "success"
+      }
+    }
+  }
+]

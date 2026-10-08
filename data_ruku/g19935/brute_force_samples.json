@@ -1,0 +1,1010 @@
+[
+  {
+    "@timestamp": "2026-03-24T16:08:00Z",
+    "@gid": "19935",
+    "message": "2026-03-24T16:08:00Z 10.35.1.10 date=2026-03-24 time=16:08:00 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=vpn level=notice vd=root action=login user=\"admin\" reason=vpn_auth_failed srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"SSL user failed to logged in\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "vpn_auth_failed"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "vpn",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T16:39:17Z",
+    "@gid": "19935",
+    "message": "2026-03-24T16:39:17Z 10.35.1.10 date=2026-03-24 time=16:39:17 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"support\" reason=invalid_credentials srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user support\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "support"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "invalid_credentials"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T17:10:34Z",
+    "@gid": "19935",
+    "message": "2026-03-24T17:10:34Z 10.35.1.10 date=2026-03-24 time=17:10:34 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"backup_user\" reason=auth_timeout srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user backup_user\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "auth_timeout"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T17:41:51Z",
+    "@gid": "19935",
+    "message": "2026-03-24T17:41:51Z 10.35.1.10 date=2026-03-24 time=17:41:51 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"db_admin\" reason=account_locked srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user db_admin\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "account_locked"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T18:12:08Z",
+    "@gid": "19935",
+    "message": "2026-03-24T18:12:08Z 10.35.1.10 date=2026-03-24 time=18:12:08 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"service_api\" reason=wrong_password srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user service_api\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "service_api"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "wrong_password"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T18:43:25Z",
+    "@gid": "19935",
+    "message": "2026-03-24T18:43:25Z 10.35.1.10 date=2026-03-24 time=18:43:25 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"admin\" reason=invalid_credentials srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user admin\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "invalid_credentials"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T19:14:42Z",
+    "@gid": "19935",
+    "message": "2026-03-24T19:14:42Z 10.35.1.10 date=2026-03-24 time=19:14:42 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=vpn level=notice vd=root action=login user=\"support\" reason=vpn_auth_failed srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"SSL user failed to logged in\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "support"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "vpn_auth_failed"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "vpn",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T19:45:59Z",
+    "@gid": "19935",
+    "message": "2026-03-24T19:45:59Z 10.35.1.10 date=2026-03-24 time=19:45:59 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"backup_user\" reason=account_locked srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user backup_user\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "account_locked"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T20:16:16Z",
+    "@gid": "19935",
+    "message": "2026-03-24T20:16:16Z 10.35.1.10 date=2026-03-24 time=20:16:16 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"db_admin\" reason=wrong_password srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user db_admin\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "wrong_password"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T20:47:33Z",
+    "@gid": "19935",
+    "message": "2026-03-24T20:47:33Z 10.35.1.10 date=2026-03-24 time=20:47:33 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"service_api\" reason=invalid_credentials srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user service_api\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "service_api"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "invalid_credentials"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T21:18:50Z",
+    "@gid": "19935",
+    "message": "2026-03-24T21:18:50Z 10.35.1.10 date=2026-03-24 time=21:18:50 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"admin\" reason=auth_timeout srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user admin\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "auth_timeout"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T21:49:07Z",
+    "@gid": "19935",
+    "message": "2026-03-24T21:49:07Z 10.35.1.10 date=2026-03-24 time=21:49:07 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"support\" reason=account_locked srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user support\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "support"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "account_locked"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T22:20:24Z",
+    "@gid": "19935",
+    "message": "2026-03-24T22:20:24Z 10.35.1.10 date=2026-03-24 time=22:20:24 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=vpn level=notice vd=root action=login user=\"backup_user\" reason=vpn_auth_failed srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"SSL user failed to logged in\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "vpn_auth_failed"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "vpn",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T22:51:41Z",
+    "@gid": "19935",
+    "message": "2026-03-24T22:51:41Z 10.35.1.10 date=2026-03-24 time=22:51:41 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"db_admin\" reason=invalid_credentials srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user db_admin\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "invalid_credentials"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T23:22:58Z",
+    "@gid": "19935",
+    "message": "2026-03-24T23:22:58Z 10.35.1.10 date=2026-03-24 time=23:22:58 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"service_api\" reason=auth_timeout srcip=10.35.1.10 dstip=10.35.1.10 status=\"failed\" msg=\"Login failed for user service_api\"",
+    "source": {
+      "ip": "10.35.1.10",
+      "user": {
+        "name": "service_api"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.10"
+    },
+    "event": {
+      "action": "login",
+      "reason": "auth_timeout"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T23:53:15Z",
+    "@gid": "19935",
+    "message": "2026-03-24T23:53:15Z 10.35.1.11 date=2026-03-24 time=23:53:15 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"admin\" reason=account_locked srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"Login failed for user admin\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "account_locked"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T00:24:32Z",
+    "@gid": "19935",
+    "message": "2026-03-25T00:24:32Z 10.35.1.11 date=2026-03-25 time=00:24:32 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"support\" reason=wrong_password srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"Login failed for user support\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "support"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "wrong_password"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T00:55:49Z",
+    "@gid": "19935",
+    "message": "2026-03-25T00:55:49Z 10.35.1.11 date=2026-03-25 time=00:55:49 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"backup_user\" reason=invalid_credentials srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"Login failed for user backup_user\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "invalid_credentials"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T01:26:06Z",
+    "@gid": "19935",
+    "message": "2026-03-25T01:26:06Z 10.35.1.11 date=2026-03-25 time=01:26:06 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=vpn level=notice vd=root action=login user=\"db_admin\" reason=vpn_auth_failed srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"SSL user failed to logged in\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "vpn_auth_failed"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "vpn",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T01:57:23Z",
+    "@gid": "19935",
+    "message": "2026-03-25T01:57:23Z 10.35.1.11 date=2026-03-25 time=01:57:23 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"service_api\" reason=account_locked srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"Login failed for user service_api\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "service_api"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "account_locked"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T02:28:40Z",
+    "@gid": "19935",
+    "message": "2026-03-25T02:28:40Z 10.35.1.11 date=2026-03-25 time=02:28:40 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"admin\" reason=wrong_password srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"Login failed for user admin\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "wrong_password"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T02:59:57Z",
+    "@gid": "19935",
+    "message": "2026-03-25T02:59:57Z 10.35.1.11 date=2026-03-25 time=02:59:57 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"support\" reason=invalid_credentials srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"Login failed for user support\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "support"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "invalid_credentials"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T03:30:14Z",
+    "@gid": "19935",
+    "message": "2026-03-25T03:30:14Z 10.35.1.11 date=2026-03-25 time=03:30:14 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"backup_user\" reason=auth_timeout srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"Login failed for user backup_user\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "auth_timeout"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T04:01:31Z",
+    "@gid": "19935",
+    "message": "2026-03-25T04:01:31Z 10.35.1.11 date=2026-03-25 time=04:01:31 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"db_admin\" reason=account_locked srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"Login failed for user db_admin\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "account_locked"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T04:32:48Z",
+    "@gid": "19935",
+    "message": "2026-03-25T04:32:48Z 10.35.1.11 date=2026-03-25 time=04:32:48 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=vpn level=notice vd=root action=login user=\"service_api\" reason=vpn_auth_failed srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"SSL user failed to logged in\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "service_api"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "vpn_auth_failed"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "vpn",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T05:03:05Z",
+    "@gid": "19935",
+    "message": "2026-03-25T05:03:05Z 10.35.1.11 date=2026-03-25 time=05:03:05 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"admin\" reason=invalid_credentials srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"Login failed for user admin\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "invalid_credentials"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T05:34:22Z",
+    "@gid": "19935",
+    "message": "2026-03-25T05:34:22Z 10.35.1.11 date=2026-03-25 time=05:34:22 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"support\" reason=auth_timeout srcip=10.35.1.11 dstip=10.35.1.11 status=\"failed\" msg=\"Login failed for user support\"",
+    "source": {
+      "ip": "10.35.1.11",
+      "user": {
+        "name": "support"
+      }
+    },
+    "destination": {
+      "ip": "10.35.1.11"
+    },
+    "event": {
+      "action": "login",
+      "reason": "auth_timeout"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T06:05:39Z",
+    "@gid": "19935",
+    "message": "2026-03-25T06:05:39Z 198.51.100.15 date=2026-03-25 time=06:05:39 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"backup_user\" reason=account_locked srcip=198.51.100.15 dstip=198.51.100.15 status=\"failed\" msg=\"Login failed for user backup_user\"",
+    "source": {
+      "ip": "198.51.100.15",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "destination": {
+      "ip": "198.51.100.15"
+    },
+    "event": {
+      "action": "login",
+      "reason": "account_locked"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T06:36:56Z",
+    "@gid": "19935",
+    "message": "2026-03-25T06:36:56Z 198.51.100.15 date=2026-03-25 time=06:36:56 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"db_admin\" reason=wrong_password srcip=198.51.100.15 dstip=198.51.100.15 status=\"failed\" msg=\"Login failed for user db_admin\"",
+    "source": {
+      "ip": "198.51.100.15",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "destination": {
+      "ip": "198.51.100.15"
+    },
+    "event": {
+      "action": "login",
+      "reason": "wrong_password"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T07:07:13Z",
+    "@gid": "19935",
+    "message": "2026-03-25T07:07:13Z 198.51.100.15 date=2026-03-25 time=07:07:13 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"service_api\" reason=invalid_credentials srcip=198.51.100.15 dstip=198.51.100.15 status=\"failed\" msg=\"Login failed for user service_api\"",
+    "source": {
+      "ip": "198.51.100.15",
+      "user": {
+        "name": "service_api"
+      }
+    },
+    "destination": {
+      "ip": "198.51.100.15"
+    },
+    "event": {
+      "action": "login",
+      "reason": "invalid_credentials"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T07:38:30Z",
+    "@gid": "19935",
+    "message": "2026-03-25T07:38:30Z 198.51.100.15 date=2026-03-25 time=07:38:30 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=vpn level=notice vd=root action=login user=\"admin\" reason=vpn_auth_failed srcip=198.51.100.15 dstip=198.51.100.15 status=\"failed\" msg=\"SSL user failed to logged in\"",
+    "source": {
+      "ip": "198.51.100.15",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "destination": {
+      "ip": "198.51.100.15"
+    },
+    "event": {
+      "action": "login",
+      "reason": "vpn_auth_failed"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "vpn",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T08:09:47Z",
+    "@gid": "19935",
+    "message": "2026-03-25T08:09:47Z 198.51.100.15 date=2026-03-25 time=08:09:47 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"support\" reason=account_locked srcip=198.51.100.15 dstip=198.51.100.15 status=\"failed\" msg=\"Login failed for user support\"",
+    "source": {
+      "ip": "198.51.100.15",
+      "user": {
+        "name": "support"
+      }
+    },
+    "destination": {
+      "ip": "198.51.100.15"
+    },
+    "event": {
+      "action": "login",
+      "reason": "account_locked"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T08:40:04Z",
+    "@gid": "19935",
+    "message": "2026-03-25T08:40:04Z 198.51.100.15 date=2026-03-25 time=08:40:04 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"backup_user\" reason=wrong_password srcip=198.51.100.15 dstip=198.51.100.15 status=\"failed\" msg=\"Login failed for user backup_user\"",
+    "source": {
+      "ip": "198.51.100.15",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "destination": {
+      "ip": "198.51.100.15"
+    },
+    "event": {
+      "action": "login",
+      "reason": "wrong_password"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T09:11:21Z",
+    "@gid": "19935",
+    "message": "2026-03-25T09:11:21Z 198.51.100.15 date=2026-03-25 time=09:11:21 devname=\"GuZ_BRANCH_100\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"db_admin\" reason=invalid_credentials srcip=198.51.100.15 dstip=198.51.100.15 status=\"failed\" msg=\"Login failed for user db_admin\"",
+    "source": {
+      "ip": "198.51.100.15",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "destination": {
+      "ip": "198.51.100.15"
+    },
+    "event": {
+      "action": "login",
+      "reason": "invalid_credentials"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T09:42:38Z",
+    "@gid": "19935",
+    "message": "2026-03-25T09:42:38Z 198.51.100.15 date=2026-03-25 time=09:42:38 devname=\"GuZ_OFFICE_500E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"service_api\" reason=auth_timeout srcip=198.51.100.15 dstip=198.51.100.15 status=\"failed\" msg=\"Login failed for user service_api\"",
+    "source": {
+      "ip": "198.51.100.15",
+      "user": {
+        "name": "service_api"
+      }
+    },
+    "destination": {
+      "ip": "198.51.100.15"
+    },
+    "event": {
+      "action": "login",
+      "reason": "auth_timeout"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T10:13:55Z",
+    "@gid": "19935",
+    "message": "2026-03-25T10:13:55Z 198.51.100.15 date=2026-03-25 time=10:13:55 devname=\"GuZ_DC_2000E\" devid=FGT19935 type=logon subtype=system level=notice vd=root action=login user=\"admin\" reason=account_locked srcip=198.51.100.15 dstip=198.51.100.15 status=\"failed\" msg=\"Login failed for user admin\"",
+    "source": {
+      "ip": "198.51.100.15",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "destination": {
+      "ip": "198.51.100.15"
+    },
+    "event": {
+      "action": "login",
+      "reason": "account_locked"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "fortinet": {
+      "firewall": {
+        "subtype": "system",
+        "status": "failed"
+      }
+    }
+  }
+]

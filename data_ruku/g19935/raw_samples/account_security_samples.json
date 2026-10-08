@@ -1,0 +1,722 @@
+[
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin_00",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "@timestamp": "2026-03-24T16:42:00Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user admin has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_chen_ming_01",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "chen_ming"
+      }
+    },
+    "@timestamp": "2026-03-24T17:25:13Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user chen_ming has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si_02",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "li_si"
+      }
+    },
+    "@timestamp": "2026-03-24T18:08:26Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user li_si has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_db_admin_03",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "@timestamp": "2026-03-24T18:51:39Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user db_admin has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_backup_user_04",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "@timestamp": "2026-03-24T19:34:52Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user backup_user has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin_05",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "@timestamp": "2026-03-24T20:17:05Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user admin has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_chen_ming_06",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "chen_ming"
+      }
+    },
+    "@timestamp": "2026-03-24T21:00:18Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user chen_ming has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si_07",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "li_si"
+      }
+    },
+    "@timestamp": "2026-03-24T21:43:31Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user li_si has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_db_admin_08",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "@timestamp": "2026-03-24T22:26:44Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user db_admin has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_backup_user_09",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "@timestamp": "2026-03-24T23:09:57Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user backup_user has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin_10",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "@timestamp": "2026-03-24T23:52:10Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user admin has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_chen_ming_11",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "chen_ming"
+      }
+    },
+    "@timestamp": "2026-03-25T00:35:23Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user chen_ming has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si_12",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "li_si"
+      }
+    },
+    "@timestamp": "2026-03-25T01:18:36Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user li_si has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_db_admin_13",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "@timestamp": "2026-03-25T02:01:49Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user db_admin has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_backup_user_14",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "@timestamp": "2026-03-25T02:44:02Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user backup_user has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin_15",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "@timestamp": "2026-03-25T03:27:15Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user admin has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_chen_ming_16",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "chen_ming"
+      }
+    },
+    "@timestamp": "2026-03-25T04:10:28Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user chen_ming has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si_17",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "li_si"
+      }
+    },
+    "@timestamp": "2026-03-25T04:53:41Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user li_si has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_db_admin_18",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "@timestamp": "2026-03-25T05:36:54Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user db_admin has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_backup_user_19",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "backup_user"
+      }
+    },
+    "@timestamp": "2026-03-25T06:19:07Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user backup_user has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_admin_20",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "admin"
+      }
+    },
+    "@timestamp": "2026-03-25T07:02:20Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user admin has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_chen_ming_21",
+        "ui": "Admin Console (10.35.2.10)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.10",
+      "user": {
+        "name": "chen_ming"
+      }
+    },
+    "@timestamp": "2026-03-25T07:45:33Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user chen_ming has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_li_si_22",
+        "ui": "Admin Console (10.35.2.11)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "10.35.2.11",
+      "user": {
+        "name": "li_si"
+      }
+    },
+    "@timestamp": "2026-03-25T08:28:46Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Add"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user li_si has been added",
+    "rule": {
+      "description": "Local user added"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "subtype": "config",
+        "cfgpath": "user.local",
+        "cfgobj": "user_local_db_admin_23",
+        "ui": "Admin Console (198.51.100.60)",
+        "srccountry": "China"
+      }
+    },
+    "source": {
+      "ip": "198.51.100.60",
+      "user": {
+        "name": "db_admin"
+      }
+    },
+    "@timestamp": "2026-03-25T09:11:59Z",
+    "@gid": "19935",
+    "event": {
+      "action": "Delete"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "message": "Local user db_admin has been deleted",
+    "rule": {
+      "description": "User account removed"
+    }
+  }
+]

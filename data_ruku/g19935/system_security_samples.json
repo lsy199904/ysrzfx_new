@@ -1,0 +1,674 @@
+[
+  {
+    "@timestamp": "2026-03-24T16:55:00Z",
+    "@gid": "19935",
+    "message": "2026-03-24T16:55:00Z 10.35.3.10 date=2026-03-24 time=16:55:00 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=system action=system user=admin srcip=10.35.3.10 status=success ui=\"Admin Console (10.35.3.10)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.35.3.10"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T17:42:07Z",
+    "@gid": "19935",
+    "message": "2026-03-24T17:42:07Z 10.35.3.11 date=2026-03-24 time=17:42:07 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=system action=system user=chen_ming srcip=10.35.3.11 status=success ui=\"Admin Console (10.35.3.11)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user chen_ming\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "10.35.3.11"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T18:29:14Z",
+    "@gid": "19935",
+    "message": "2026-03-24T18:29:14Z 198.51.100.70 date=2026-03-24 time=18:29:14 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=system action=system user=ops_admin srcip=198.51.100.70 status=success ui=\"Admin Console (198.51.100.70)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user ops_admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "198.51.100.70"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T19:16:21Z",
+    "@gid": "19935",
+    "message": "2026-03-24T19:16:21Z 10.35.3.10 date=2026-03-24 time=19:16:21 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=system action=system user=li_si srcip=10.35.3.10 status=success ui=\"Admin Console (10.35.3.10)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user li_si\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.35.3.10"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T20:03:28Z",
+    "@gid": "19935",
+    "message": "2026-03-24T20:03:28Z 10.35.3.11 date=2026-03-24 time=20:03:28 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=system action=system user=admin srcip=10.35.3.11 status=success ui=\"Admin Console (10.35.3.11)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.35.3.11"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T20:50:35Z",
+    "@gid": "19935",
+    "message": "2026-03-24T20:50:35Z 198.51.100.70 date=2026-03-24 time=20:50:35 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=system action=system user=chen_ming srcip=198.51.100.70 status=success ui=\"Admin Console (198.51.100.70)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user chen_ming\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "198.51.100.70"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T21:37:42Z",
+    "@gid": "19935",
+    "message": "2026-03-24T21:37:42Z 10.35.3.10 date=2026-03-24 time=21:37:42 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=system action=system user=ops_admin srcip=10.35.3.10 status=success ui=\"Admin Console (10.35.3.10)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user ops_admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "10.35.3.10"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T22:24:49Z",
+    "@gid": "19935",
+    "message": "2026-03-24T22:24:49Z 10.35.3.11 date=2026-03-24 time=22:24:49 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=system action=system user=li_si srcip=10.35.3.11 status=success ui=\"Admin Console (10.35.3.11)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user li_si\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.35.3.11"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T23:11:56Z",
+    "@gid": "19935",
+    "message": "2026-03-24T23:11:56Z 198.51.100.70 date=2026-03-24 time=23:11:56 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=system action=system user=admin srcip=198.51.100.70 status=success ui=\"Admin Console (198.51.100.70)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "198.51.100.70"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-24T23:58:03Z",
+    "@gid": "19935",
+    "message": "2026-03-24T23:58:03Z 10.35.3.10 date=2026-03-24 time=23:58:03 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=system action=system user=chen_ming srcip=10.35.3.10 status=success ui=\"Admin Console (10.35.3.10)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user chen_ming\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "10.35.3.10"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T00:45:10Z",
+    "@gid": "19935",
+    "message": "2026-03-25T00:45:10Z 10.35.3.11 date=2026-03-25 time=00:45:10 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=system action=system user=ops_admin srcip=10.35.3.11 status=success ui=\"Admin Console (10.35.3.11)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user ops_admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "10.35.3.11"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T01:32:17Z",
+    "@gid": "19935",
+    "message": "2026-03-25T01:32:17Z 198.51.100.70 date=2026-03-25 time=01:32:17 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=system action=system user=li_si srcip=198.51.100.70 status=success ui=\"Admin Console (198.51.100.70)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user li_si\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "198.51.100.70"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T02:19:24Z",
+    "@gid": "19935",
+    "message": "2026-03-25T02:19:24Z 10.35.3.10 date=2026-03-25 time=02:19:24 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=system action=system user=admin srcip=10.35.3.10 status=success ui=\"Admin Console (10.35.3.10)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.35.3.10"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T03:06:31Z",
+    "@gid": "19935",
+    "message": "2026-03-25T03:06:31Z 10.35.3.11 date=2026-03-25 time=03:06:31 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=system action=system user=chen_ming srcip=10.35.3.11 status=success ui=\"Admin Console (10.35.3.11)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user chen_ming\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "10.35.3.11"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T03:53:38Z",
+    "@gid": "19935",
+    "message": "2026-03-25T03:53:38Z 198.51.100.70 date=2026-03-25 time=03:53:38 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=system action=system user=ops_admin srcip=198.51.100.70 status=success ui=\"Admin Console (198.51.100.70)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user ops_admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "198.51.100.70"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T04:40:45Z",
+    "@gid": "19935",
+    "message": "2026-03-25T04:40:45Z 10.35.3.10 date=2026-03-25 time=04:40:45 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=system action=system user=li_si srcip=10.35.3.10 status=success ui=\"Admin Console (10.35.3.10)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user li_si\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.35.3.10"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T05:27:52Z",
+    "@gid": "19935",
+    "message": "2026-03-25T05:27:52Z 10.35.3.11 date=2026-03-25 time=05:27:52 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=system action=system user=admin srcip=10.35.3.11 status=success ui=\"Admin Console (10.35.3.11)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.35.3.11"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T06:14:59Z",
+    "@gid": "19935",
+    "message": "2026-03-25T06:14:59Z 198.51.100.70 date=2026-03-25 time=06:14:59 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=system action=system user=chen_ming srcip=198.51.100.70 status=success ui=\"Admin Console (198.51.100.70)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user chen_ming\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "198.51.100.70"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T07:01:06Z",
+    "@gid": "19935",
+    "message": "2026-03-25T07:01:06Z 10.35.3.10 date=2026-03-25 time=07:01:06 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=system action=system user=ops_admin srcip=10.35.3.10 status=success ui=\"Admin Console (10.35.3.10)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user ops_admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "10.35.3.10"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T07:48:13Z",
+    "@gid": "19935",
+    "message": "2026-03-25T07:48:13Z 10.35.3.11 date=2026-03-25 time=07:48:13 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=system action=system user=li_si srcip=10.35.3.11 status=success ui=\"Admin Console (10.35.3.11)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user li_si\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.35.3.11"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T08:35:20Z",
+    "@gid": "19935",
+    "message": "2026-03-25T08:35:20Z 198.51.100.70 date=2026-03-25 time=08:35:20 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=system action=system user=admin srcip=198.51.100.70 status=success ui=\"Admin Console (198.51.100.70)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "198.51.100.70"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T09:22:27Z",
+    "@gid": "19935",
+    "message": "2026-03-25T09:22:27Z 10.35.3.10 date=2026-03-25 time=09:22:27 devname=GuZ_BRANCH_100 devid=FGT19935 type=event subtype=system action=system user=chen_ming srcip=10.35.3.10 status=success ui=\"Admin Console (10.35.3.10)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user chen_ming\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "10.35.3.10"
+    },
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T10:09:34Z",
+    "@gid": "19935",
+    "message": "2026-03-25T10:09:34Z 10.35.3.11 date=2026-03-25 time=10:09:34 devname=GuZ_OFFICE_500E devid=FGT19935 type=event subtype=system action=system user=ops_admin srcip=10.35.3.11 status=success ui=\"Admin Console (10.35.3.11)\" logdesc=\"Device rebooted\" msg=\"Device rebooted by user ops_admin\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "10.35.3.11"
+    },
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device rebooted"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    }
+  },
+  {
+    "@timestamp": "2026-03-25T10:56:41Z",
+    "@gid": "19935",
+    "message": "2026-03-25T10:56:41Z 198.51.100.70 date=2026-03-25 time=10:56:41 devname=GuZ_DC_2000E devid=FGT19935 type=event subtype=system action=system user=li_si srcip=198.51.100.70 status=success ui=\"Admin Console (198.51.100.70)\" logdesc=\"Device shutdown\" msg=\"Device shutdown by user li_si\"",
+    "event": {
+      "action": "system"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "198.51.100.70"
+    },
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "rule": {
+      "description": "Device shutdown"
+    },
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    }
+  }
+]

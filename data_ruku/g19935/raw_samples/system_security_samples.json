@@ -1,0 +1,674 @@
+[
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-24T16:55:00Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.35.3.10"
+    },
+    "message": "Device rebooted by user admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-24T17:42:07Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "10.35.3.11"
+    },
+    "message": "Device shutdown by user chen_ming",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-24T18:29:14Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "198.51.100.70"
+    },
+    "message": "Device rebooted by user ops_admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-24T19:16:21Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.35.3.10"
+    },
+    "message": "Device shutdown by user li_si",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-24T20:03:28Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.35.3.11"
+    },
+    "message": "Device rebooted by user admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-24T20:50:35Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "198.51.100.70"
+    },
+    "message": "Device shutdown by user chen_ming",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-24T21:37:42Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "10.35.3.10"
+    },
+    "message": "Device rebooted by user ops_admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-24T22:24:49Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.35.3.11"
+    },
+    "message": "Device shutdown by user li_si",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-24T23:11:56Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "198.51.100.70"
+    },
+    "message": "Device rebooted by user admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-24T23:58:03Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "10.35.3.10"
+    },
+    "message": "Device shutdown by user chen_ming",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T00:45:10Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "10.35.3.11"
+    },
+    "message": "Device rebooted by user ops_admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T01:32:17Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "198.51.100.70"
+    },
+    "message": "Device shutdown by user li_si",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T02:19:24Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.35.3.10"
+    },
+    "message": "Device rebooted by user admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T03:06:31Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "10.35.3.11"
+    },
+    "message": "Device shutdown by user chen_ming",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T03:53:38Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "198.51.100.70"
+    },
+    "message": "Device rebooted by user ops_admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T04:40:45Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.35.3.10"
+    },
+    "message": "Device shutdown by user li_si",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T05:27:52Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "10.35.3.11"
+    },
+    "message": "Device rebooted by user admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T06:14:59Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "198.51.100.70"
+    },
+    "message": "Device shutdown by user chen_ming",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T07:01:06Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "10.35.3.10"
+    },
+    "message": "Device rebooted by user ops_admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T07:48:13Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "10.35.3.11"
+    },
+    "message": "Device shutdown by user li_si",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T08:35:20Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "admin"
+      },
+      "ip": "198.51.100.70"
+    },
+    "message": "Device rebooted by user admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.10)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T09:22:27Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_BRANCH_100",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "chen_ming"
+      },
+      "ip": "10.35.3.10"
+    },
+    "message": "Device shutdown by user chen_ming",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (10.35.3.11)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T10:09:34Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_OFFICE_500E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "ops_admin"
+      },
+      "ip": "10.35.3.11"
+    },
+    "message": "Device rebooted by user ops_admin",
+    "rule": {
+      "description": "Device rebooted"
+    }
+  },
+  {
+    "fortinet": {
+      "firewall": {
+        "type": "event",
+        "subtype": "system",
+        "ui": "Admin Console (198.51.100.70)"
+      }
+    },
+    "event": {
+      "action": "system"
+    },
+    "@timestamp": "2026-03-25T10:56:41Z",
+    "@gid": "19935",
+    "observer": {
+      "name": "GuZ_DC_2000E",
+      "serial_number": "FGT19935"
+    },
+    "source": {
+      "user": {
+        "name": "li_si"
+      },
+      "ip": "198.51.100.70"
+    },
+    "message": "Device shutdown by user li_si",
+    "rule": {
+      "description": "Device shutdown"
+    }
+  }
+]
