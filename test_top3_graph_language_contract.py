@@ -80,6 +80,7 @@ from tools.brute_force import (
     _calculate_ip_priority,
     _is_brute_force_detection_hit,
 )
+from tools.ip_trace import build_graph_data
 
 
 def _attack_record(ip: str, timestamp: str, *, subtype: str = "system", action: str = "login", status: str = "failed", reason: str = "invalid_credentials") -> dict:
@@ -181,6 +182,150 @@ class BruteForceTop3ContractTests(unittest.TestCase):
         sampled_ips = {_attack["attack_src"] for _attack in compacted["top_ip_records"]}
         self.assertEqual(sampled_ips, {"10.0.0.1", "10.0.0.2", "10.0.0.3"})
 
+    def test_large_trace_payload_cannot_hide_selected_ip_events(self):
+        """Trace activities must not consume the Top-IP evidence budget."""
+        selected_ips = ["10.180.40.80", "10.180.30.70", "10.180.95.33"]
+        records = []
+        for rank, ip in enumerate(selected_ips, 1):
+            records.extend(
+                _attack_record(ip, f"2026-03-26 {rank + 2:02d}:0{minute}:00")
+                | {
+                    "source.user.name": f"user_{rank}_{minute}",
+                    "observer.name": "GuZ_OFFICE_500E",
+                }
+                for minute in range(5)
+            )
+
+        large_activities = json.dumps({
+            "steps": [
+                {"step": index, "title": "trace", "detail": "x" * 800}
+                for index in range(1, 6)
+            ],
+            "ppl_query": "q" * 3000,
+            "data": records,
+        })
+        observation = {
+            "count": 250,
+            "ip_stats": [
+                {"ip": ip, "count": 5, "percentage": 2.0}
+                for ip in selected_ips
+            ],
+            "trace_info": {
+                "trace_ips": selected_ips,
+                "trace_ip_stats": [
+                    {"ip": ip, "count": 5, "percentage": 2.0}
+                    for ip in selected_ips
+                ],
+                "ip_details": [
+                    {
+                        "ip": ip,
+                        "rank": rank,
+                        "brute_force_count": 5,
+                        "trace_event_count": 20,
+                        "time_window": "2026-03-26T00:00:00+08:00 ~ 2026-03-26T01:00:00+08:00",
+                        "activities": large_activities,
+                        "graph_data": {"render_lines": [{"payload": "y" * 500}] * 20},
+                    }
+                    for rank, ip in enumerate(selected_ips, 1)
+                ],
+            },
+            "data": records,
+            "compression": {
+                "compressed": True,
+                "original_count": 250,
+                "compressed_count": 10,
+                "summary_text": "summary " * 250,
+            },
+        }
+
+        compacted = json.loads(
+            compact_observation_for_llm(json.dumps(observation, ensure_ascii=False))
+        )
+        self.assertNotIn("activities", json.dumps(compacted, ensure_ascii=False))
+        self.assertNotIn("graph_data", compacted.get("trace_info", {}))
+        details = compacted["top_ip_details"]
+        self.assertEqual([item["ip"] for item in details], selected_ips)
+        self.assertTrue(all(item["records_complete"] for item in details))
+        records_by_ip = {
+            ip: [item for item in compacted["top_ip_records"] if item["ip"] == ip]
+            for ip in selected_ips
+        }
+        self.assertEqual({ip: len(items) for ip, items in records_by_ip.items()}, {
+            ip: 5 for ip in selected_ips
+        })
+
+    def test_every_summary_event_matches_same_ip_detection_line(self):
+        selected_ips = ["10.180.40.80", "10.180.30.70", "10.180.95.33"]
+        records = [
+            _attack_record("10.180.40.80", "2026-03-26 03:07:12", reason="wrong_password")
+            | {"source.user.name": "admin", "observer.name": "GuZ_OFFICE_500E"},
+            _attack_record("10.180.40.80", "2026-03-26 18:40:19", reason="bad_auth_request")
+            | {"source.user.name": "backup_user", "observer.name": "GuZ_OFFICE_500E"},
+            _attack_record("10.180.30.70", "2026-03-26 08:15:21", reason="invalid_credentials")
+            | {"source.user.name": "root", "observer.name": "GuZ_BRANCH_100"},
+            _attack_record("10.180.95.33", "2026-03-26 13:17:45", reason="invalid_credentials")
+            | {"source.user.name": "admin", "observer.name": "GuZ_OFFICE_500E"},
+            _attack_record("10.180.95.33", "2026-03-26 18:28:48", reason="wrong_password")
+            | {"source.user.name": "sysadmin", "observer.name": "GuZ_OFFICE_500E"},
+        ]
+        observation = json.loads(compact_observation_for_llm(json.dumps({
+            "count": len(records),
+            "ip_stats": [
+                {"ip": "10.180.40.80", "count": 2, "percentage": 40.0},
+                {"ip": "10.180.30.70", "count": 1, "percentage": 20.0},
+                {"ip": "10.180.95.33", "count": 2, "percentage": 40.0},
+            ],
+            "trace_info": {
+                "trace_ips": selected_ips,
+                "trace_ip_stats": [
+                    {"ip": "10.180.40.80", "count": 2, "percentage": 40.0},
+                    {"ip": "10.180.30.70", "count": 1, "percentage": 20.0},
+                    {"ip": "10.180.95.33", "count": 2, "percentage": 40.0},
+                ],
+            },
+            "data": records,
+        }, ensure_ascii=False)))
+
+        for ip in selected_ips:
+            ip_records = [record for record in records if record["attack_src"] == ip]
+            graph = build_graph_data({"data": ip_records})
+            global_lines = [
+                line for line in graph["render_lines"]
+                if line.get("event_role") == "global_hit"
+            ]
+            summary_events = [
+                event for event in observation["top_ip_records"]
+                if event.get("ip") == ip
+            ]
+            self.assertEqual(len(summary_events), len(ip_records))
+            self.assertEqual(
+                sum(int(line.get("count", 0)) for line in global_lines),
+                len(ip_records),
+            )
+            for event in summary_events:
+                event_user = event.get("source.user.name")
+                event_time = event.get("@timestamp")
+                event_reason = event.get("event.reason")
+                matching_lines = []
+                for line in global_lines:
+                    steps = line.get("steps", [])
+                    attacker = next(
+                        (step.get("name") for step in steps if step.get("type") == "attacker"),
+                        None,
+                    )
+                    user = next(
+                        (step.get("name") for step in steps if step.get("type") == "user"),
+                        None,
+                    )
+                    if (
+                        attacker == ip
+                        and user == event_user
+                        and line.get("first_seen") <= event_time <= line.get("last_seen")
+                        and line.get("details", {}).get("event_reason") == event_reason
+                    ):
+                        matching_lines.append(line)
+                self.assertTrue(matching_lines, event)
+
     @patch("tools.brute_force.ip_trace_request")
     def test_trace_calls_match_top3_order_and_independent_windows(self, trace_request):
         trace_request.side_effect = lambda ip, start_time, end_time, gid: {
@@ -263,7 +408,7 @@ class BruteForceTop3ContractTests(unittest.TestCase):
             self.assertEqual(graph["trace_event_count"], detail["trace_event_count"])
             self.assertEqual(graph["time_window"], detail["time_window"])
             for line in graph["render_lines"]:
-                self.assertIn(line.get("event_role"), {"detection_hit", "trace_context"})
+                self.assertEqual(line.get("event_role"), "global_hit")
 
     def test_detection_hit_classifier_matches_the_brute_force_ppl(self):
         self.assertTrue(_is_brute_force_detection_hit(_attack_record("10.0.0.1", "2026-03-26 10:00:00")))

@@ -565,46 +565,6 @@ def _render_line_timestamp(value: str) -> str:
     return text
 
 
-def _is_brute_force_detection_record(record: dict) -> bool:
-    """Classify a trace record against the brute-force PPL predicate.
-
-    IP tracing returns both the original brute-force hits and other activity in
-    the same window.  The latter must remain in ``render_lines`` but is marked
-    as context so the frontend can style it differently.
-    """
-    if not isinstance(record, dict):
-        return False
-    subtype = _get_field(record, ["fortinet.firewall.subtype", "subtype"])
-    action = _get_field(record, ["event.action", "action"])
-    status = _get_field(record, ["fortinet.firewall.status", "status"])
-    message = _get_field(record, ["message", "msg"])
-    reason = _get_field(record, ["event.reason", "reason"])
-    source_ip = _get_field(record, ["source.ip", "srcip"])
-    condition_fields_present = any(
-        value not in (None, "")
-        for value in (subtype, action, status, message, reason, source_ip)
-    )
-    # Legacy/synthetic trace fixtures may omit all predicate fields.  Such
-    # records originate from a brute-force result and remain detection hits.
-    if not condition_fields_present:
-        return True
-    if str(reason or "").strip().lower() == "ip_blocked":
-        return False
-    if str(source_ip or "").strip() == "218.92.0.39":
-        return False
-    return (
-        (
-            str(subtype or "").strip().lower() == "system"
-            and str(action or "").strip().lower() == "login"
-            and str(status or "").strip().lower() == "failed"
-        )
-        or (
-            str(subtype or "").strip().lower() == "vpn"
-            and str(message or "").strip() == "SSL user failed to logged in"
-        )
-    )
-
-
 def _build_render_lines(records: list) -> list:
     """Build compact, ordered paths for a frontend two-lane renderer.
 
@@ -621,6 +581,7 @@ def _build_render_lines(records: list) -> list:
         target_ip = _get_field(record, ["destination.ip", "dstip", "remip"])
         user = _get_field(record, ["source.user.name", "user", "username", "account"])
         action = _get_field(record, ["event.action", "action"])
+        event_reason = _get_field(record, ["event.reason", "reason"])
         subtype = _get_field(record, ["fortinet.firewall.subtype", "subtype"])
         oss = _get_field(record, ["observer.name", "devname", "device"])
         policy_id = _get_field(record, ["rule.id", "policyid"])
@@ -630,11 +591,11 @@ def _build_render_lines(records: list) -> list:
         # UTC values (including a trailing ``Z``) and already-materialized
         # ``@timestamp_cst`` values consistently.
         timestamp = _render_line_timestamp(record_trace_timestamp(record))
-        event_role = (
-            "detection_hit"
-            if _is_brute_force_detection_record(record)
-            else "trace_context"
-        )
+        # ``ip_trace`` is shared by brute-force, network-attack, account,
+        # system-security, and direct IP-trace scenarios.  A detector-specific
+        # role here would be wrong for every other caller.  Every returned row
+        # is therefore one real hit from the global IP/window trace query.
+        event_role = "global_hit"
 
         valid_user = user not in ("", "-", "None", "null", "nan", "N/A")
         direction = "upper" if valid_user else "lower"
@@ -684,6 +645,7 @@ def _build_render_lines(records: list) -> list:
             str(destination_port),
             status,
             event_role,
+            str(event_reason),
         )
         line = grouped.setdefault(key, {
             "base_id": base_id,
@@ -714,6 +676,8 @@ def _build_render_lines(records: list) -> list:
             line["details"]["rule_id"] = policy_id
         if policy_name:
             line["details"]["rule_name"] = policy_name
+        if event_reason:
+            line["details"]["event_reason"] = event_reason
         message = _get_field(record, ["message", "msg"])
         if message:
             line["details"]["message"] = message

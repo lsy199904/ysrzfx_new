@@ -206,6 +206,7 @@ prompts = {
             "【防幻觉规则 - 最重要】\n"
             "- 【关键】所有统计数字必须来自工具返回的 ip_summary/ip_stats 或 compression.summary_text，绝不从 data_sample 推断数字；自动溯源场景优先使用 trace_info.trace_ip_stats。\n"
             "- 【关键】工具返回的 data_sample 只是原始数据样本，不代表全部记录；Top 3、总 IP 数、次数和占比必须使用 ip_summary/ip_stats。若存在 trace_info.trace_ips，则它是文字报告与 graph_data.graphs 的共同权威列表，按该顺序展示，累计覆盖率提前停止时不足 3 个不得补齐。\n"
+            "- 【关键】top_ip_details 和 top_ip_records 均由完整查询 data 生成，是入选攻击源时间线的权威明细。每个 top_ip_details.full_record_count 大于 0 的 IP，必须使用同 IP 的 top_ip_records 输出真实事件，禁止写‘未在压缩日志中发现该IP’。\n"
             "- 【关键】时间线只能列出工具明确返回的 trace_info.trace_ips（没有该字段时才使用统计 Top 3）攻击源 IP（不足 3 个就显示有几个就显示几个，不要凑数）。对于未在工具数据中出现的 IP、时间戳、用户名，禁止在时间线中凭空生成！\n"
             "- 【关键】如果工具返回的是聚合统计（例如 54 个 IP 共 1864 条），不要逐个列出 54 个 IP；只列 Top 3（按攻击次数），其余写 另有 X 个 IP 详见原始记录\n"
             "- 【关键】IP 总数必须等于工具返回的 ip_summary.unique_ip_count（或 ip_count/unique_ips 字段）。如工具返回 unique_ip_count=3，答案里写 3 个 IP 详情 + 0 个其他 IP；如工具返回 unique_ip_count=59，则 Top 3 + 另有 56 个 IP 详见原始记录。**严禁编造或推断 IP 总数**\n"
@@ -344,6 +345,7 @@ prompts = {
             "## 3. Top 3 Detailed Attack Timelines\n"
             "## 4. Security Recommendations\n"
             "For automatic tracing, sources must come from trace_info.trace_ips and trace_info.trace_ip_stats in the exact order used by graph_data.graphs; show fewer when the 80% threshold stops early. Otherwise use the tool's complete ip_stats/ip_summary. "
+            "top_ip_details and top_ip_records are derived from the complete query data and are authoritative for selected-source timelines. If a selected IP has full_record_count greater than zero, use its real top_ip_records events and never claim that the compressed logs contain no details for that IP. "
             "Do not rank from data samples. Sort timeline events by structured @timestamp ascending and preserve real order. "
             "Use only stages supported by logs; never invent a stage or timestamp.\n\n"
             "Question: {input}\n"
@@ -803,6 +805,37 @@ async def chat_agent_stream(request: Request):
             item.get("ip"): item for item in details
             if isinstance(item, dict) and item.get("ip")
         }
+
+        def record_field(record: dict, field: str):
+            if not isinstance(record, dict):
+                return None
+            if field in record and record[field] not in (None, ""):
+                return record[field]
+            value = record
+            for part in field.split("."):
+                if not isinstance(value, dict) or part not in value:
+                    return None
+                value = value[part]
+            return value if value not in (None, "") else None
+
+        # Use the complete tool data for fallback timelines. Compression
+        # samples must never decide whether a selected Top-IP has details.
+        records_by_ip = {str(item.get("ip")): [] for item in top_stats}
+        for record in data:
+            ip = (
+                record_field(record, "attack_src")
+                or record_field(record, "source.ip")
+            )
+            if str(ip) in records_by_ip:
+                records_by_ip[str(ip)].append(record)
+        for ip_records in records_by_ip.values():
+            ip_records.sort(
+                key=lambda record: str(
+                    record_field(record, "@timestamp_cst")
+                    or record_field(record, "@timestamp")
+                    or ""
+                )
+            )
         if is_chinese_input:
             lines = [
                 "## 1. 事件概述",
@@ -833,9 +866,21 @@ async def chat_agent_stream(request: Request):
                 lines.append(
                     f"- 攻击源：{item['ip']}（{item.get('count', 0)} 次，占比 {item.get('percentage', 0)}%）"
                 )
+                attack_records = records_by_ip.get(str(item.get("ip")), [])
                 graph = detail.get("graph_data") if isinstance(detail, dict) else {}
                 render_lines = graph.get("render_lines", []) if isinstance(graph, dict) else []
-                if render_lines:
+                if attack_records:
+                    for record in attack_records[:10]:
+                        timestamp = (
+                            record_field(record, "@timestamp_cst")
+                            or record_field(record, "@timestamp")
+                            or "时间未提供"
+                        )
+                        user = record_field(record, "source.user.name") or "用户未提供"
+                        action = record_field(record, "event.action") or "登录尝试"
+                        reason = record_field(record, "event.reason") or "原因未提供"
+                        lines.append(f"  - {timestamp}：{user}，{action}（{reason}）")
+                elif render_lines:
                     lines.append(f"  - 关联活动线路：{len(render_lines)} 条。")
                 else:
                     lines.append("  - 未返回该 IP 的时间线线路。")
@@ -877,12 +922,25 @@ async def chat_agent_stream(request: Request):
             lines.append(
                 f"- Source IP: {item['ip']} ({item.get('count', 0)} events, {item.get('percentage', 0)}%)"
             )
+            attack_records = records_by_ip.get(str(item.get("ip")), [])
             graph = detail.get("graph_data") if isinstance(detail, dict) else {}
             render_lines = graph.get("render_lines", []) if isinstance(graph, dict) else []
-            lines.append(
-                f"  - Related activity lines: {len(render_lines)}."
-                if render_lines else "  - No timeline lines were returned for this IP."
-            )
+            if attack_records:
+                for record in attack_records[:10]:
+                    timestamp = (
+                        record_field(record, "@timestamp_cst")
+                        or record_field(record, "@timestamp")
+                        or "time not provided"
+                    )
+                    user = record_field(record, "source.user.name") or "user not provided"
+                    action = record_field(record, "event.action") or "login attempt"
+                    reason = record_field(record, "event.reason") or "reason not provided"
+                    lines.append(f"  - {timestamp}: {user}, {action} ({reason})")
+            else:
+                lines.append(
+                    f"  - Related activity lines: {len(render_lines)}."
+                    if render_lines else "  - No timeline lines were returned for this IP."
+                )
         if not top_stats:
             lines.append("- No usable attack timeline was returned.")
         lines.extend([
@@ -979,6 +1037,7 @@ async def chat_agent_stream(request: Request):
                 "不要因为工具返回英文或历史记录使用英文而切换语言。\n"
                 "最终答案必须是完整中文 Markdown 报告，并严格保留已确认的四段式标题，不得改名：‘## 1. 事件概述’、‘## 2. 关键实体’、‘## 3. 攻击详细时间线TOP3’、‘## 4. 安全建议（按历史/近期语境区分）’。\n"
                 "自动溯源时，关键实体和时间线必须严格使用 trace_info.trace_ips / trace_info.trace_ip_stats，并与 graph_data.graphs 的 IP 和顺序完全一致；累计覆盖率提前停止时不足 3 个不得补齐。没有 trace_ips 时才使用工具统计 Top 3。\n"
+                "攻击详细时间线必须优先使用 top_ip_details / top_ip_records；这些字段来自完整查询数据。只要入选 IP 的 full_record_count 大于 0，就必须列出该 IP 的真实事件，禁止声称压缩日志中没有该 IP 明细。\n"
                 "所有中间内容都属于同一个 <think> 区域，工具完成后才能结束思考并输出 final_answer。\n"
             )
         return (
@@ -990,6 +1049,7 @@ async def chat_agent_stream(request: Request):
             "Keep tool names, JSON keys, field names, PPL, IP addresses, timestamps, and raw log values unchanged.\n"
             "The final answer must be a complete English Markdown report with headings such as ## 1. Query Summary, ## 2. Key Entities, ## 3. Attack Timeline, and ## 4. Recommendations.\n"
             "For automatic tracing, list only trace_info.trace_ips / trace_info.trace_ip_stats in the exact graph_data.graphs order; if cumulative coverage stops at one or two IPs, do not refill to three. Without trace_ips, use the actual Top 3 tool statistics.\n"
+            "Build selected-source timelines from top_ip_details / top_ip_records, which are derived from the complete query data. When full_record_count is greater than zero, include real events for that IP and never say its details are absent from compressed logs.\n"
             "All intermediate content belongs to one <think> region; close it only after every tool call and intermediate result is complete, then emit final_answer.\n"
             "After receiving a tool result, produce the final answer in English only. Do not call another tool "
             "when the result already has HTTP status 200.\n"

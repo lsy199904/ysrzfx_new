@@ -15,6 +15,20 @@ _MAX_OBSERVATION_FIELD_CHARS = 3000
 _DROP_OBSERVATION_KEYS = {"graph_data", "render_lines"}
 _DROPPED = object()
 
+# Fields from the brute-force query that are needed to ground a Top-IP
+# timeline. Keeping this explicit preserves real events without carrying the
+# duplicated graph payload into the next model call.
+_TOP_IP_EVENT_FIELDS = (
+    "source.user.name",
+    "event.action",
+    "event.reason",
+    "message",
+    "fortinet.firewall.subtype",
+    "fortinet.firewall.status",
+    "observer.name",
+    "rule.id",
+)
+
 
 def _truncate_observation_text(value: str, limit: int = _MAX_OBSERVATION_FIELD_CHARS) -> str:
     """Keep both the beginning and end of a long tool field."""
@@ -44,7 +58,10 @@ def _compact_observation_value(value, key: str = "", depth: int = 0):
         # Raw data and per-IP trace details can be large; keep enough records
         # for a useful summary while leaving the full payload available to SSE.
         if key == "top_ip_records":
-            limit = 30
+            # This list is already selected and compacted from the complete
+            # Top-IP data. The final JSON budget step below reduces it evenly
+            # only when the serialized observation actually exceeds the cap.
+            limit = len(value)
         else:
             limit = 3 if key in {"data", "ip_details"} else 8
         compacted = []
@@ -94,6 +111,132 @@ def _prompt_ip(record: dict):
     return None
 
 
+def _compact_top_ip_record(record: dict, ip: str, rank: int) -> dict:
+    """Keep the real queried fields needed for one Top-IP timeline event."""
+    compacted = {"ip": ip, "attack_src": ip, "rank": rank}
+    timestamp = (
+        _prompt_field(record, "@timestamp_cst")
+        or _prompt_field(record, "@timestamp")
+    )
+    if timestamp not in (None, ""):
+        compacted["@timestamp"] = timestamp
+    for field in _TOP_IP_EVENT_FIELDS:
+        value = _prompt_field(record, field)
+        if value not in (None, ""):
+            if isinstance(value, str):
+                value = _truncate_observation_text(
+                    value,
+                    240 if field == "message" else 160,
+                )
+            compacted[field] = value
+    return compacted
+
+
+def _build_top_ip_prompt_data(parsed: dict, selected_ips: list[str], report_stats: list[dict]):
+    """Build balanced Top-IP evidence from the complete query result.
+
+    ``parsed['data']`` is the full ToolExecutor result. Compression metadata
+    and ``data_sample`` are deliberately not used here. All selected-IP events
+    enter the candidate prompt; the final budget step reduces them evenly only
+    when necessary, while the summary always describes every matching event.
+    """
+    records = parsed.get("data")
+    if not isinstance(records, list) or not selected_ips:
+        return [], []
+
+    stats_by_ip = {
+        str(item.get("ip")): item
+        for item in report_stats
+        if isinstance(item, dict) and item.get("ip")
+    }
+    records_by_ip = {ip: [] for ip in selected_ips}
+    for record in records:
+        record_ip = _prompt_ip(record)
+        if record_ip in records_by_ip:
+            records_by_ip[record_ip].append(record)
+
+    details = []
+    prompt_records = []
+    for rank, ip in enumerate(selected_ips, 1):
+        ip_records = sorted(
+            records_by_ip.get(ip, []),
+            key=lambda record: str(
+                _prompt_field(record, "@timestamp_cst")
+                or _prompt_field(record, "@timestamp")
+                or ""
+            ),
+        )
+        expected_count = stats_by_ip.get(ip, {}).get("count", len(ip_records))
+        try:
+            expected_count = int(expected_count or 0)
+        except (TypeError, ValueError):
+            expected_count = len(ip_records)
+
+        selected_records = ip_records
+        compacted_records = [
+            _compact_top_ip_record(record, ip, rank)
+            for record in selected_records
+        ]
+        prompt_records.extend(compacted_records)
+
+        timestamps = [
+            str(
+                _prompt_field(record, "@timestamp_cst")
+                or _prompt_field(record, "@timestamp")
+                or ""
+            )
+            for record in ip_records
+        ]
+        timestamps = [value for value in timestamps if value]
+        details.append({
+            "ip": ip,
+            "rank": rank,
+            "count": expected_count,
+            "percentage": stats_by_ip.get(ip, {}).get("percentage", 0),
+            "full_record_count": len(ip_records),
+            "records_in_prompt": len(compacted_records),
+            "records_complete": len(compacted_records) == len(ip_records),
+            "first_seen": timestamps[0] if timestamps else "",
+            "last_seen": timestamps[-1] if timestamps else "",
+        })
+    return details, prompt_records
+
+
+def _compact_trace_info_for_prompt(trace_info: dict, selected_ips: list[str]) -> dict:
+    """Keep trace metadata without duplicated activities and graph payloads."""
+    if not isinstance(trace_info, dict):
+        return {}
+    compacted = {
+        key: trace_info[key]
+        for key in (
+            "status", "message", "ip_count", "trace_ips", "trace_ip_stats",
+            "time_window",
+        )
+        if key in trace_info
+    }
+    details = trace_info.get("ip_details")
+    if isinstance(details, list):
+        detail_by_ip = {
+            str(item.get("ip")): item
+            for item in details
+            if isinstance(item, dict) and item.get("ip")
+        }
+        ordered_ips = selected_ips or list(detail_by_ip)
+        compacted["ip_details"] = [
+            {
+                key: detail_by_ip[ip].get(key)
+                for key in (
+                    "ip", "rank", "status", "message", "brute_force_count",
+                    "trace_event_count", "time_window", "start_time", "end_time",
+                )
+                if detail_by_ip[ip].get(key) not in (None, "")
+            }
+            for ip in ordered_ips
+            if ip in detail_by_ip
+        ]
+    return compacted
+
+
 def compact_observation_for_llm(observation: str) -> str:
     """Bound a tool observation used in the ReAct scratchpad.
 
@@ -116,23 +259,24 @@ def compact_observation_for_llm(observation: str) -> str:
             # Put deterministic aggregate statistics before any sampled raw
             # records.  The model must never infer Top 3 from data[:3].
             priority_keys = (
-                "ip_stats", "count", "compression", "steps", "ppl_query",
-                "http_status", "error", "suggestion", "trace_info", "status",
-                "message", "ip_count", "time_window",
+                "ip_stats", "count", "steps", "ppl_query", "http_status",
+                "error", "suggestion", "status", "message", "ip_count",
+                "time_window",
             )
             projected = {
                 key: parsed[key]
                 for key in priority_keys
                 if key in parsed
             }
+            trace_info = parsed.get("trace_info")
+            trace_info = trace_info if isinstance(trace_info, dict) else {}
+            selected_ips = [
+                str(ip) for ip in trace_info.get("trace_ips", [])
+                if ip not in (None, "")
+            ]
+            report_stats = []
             ip_stats = parsed.get("ip_stats")
             if isinstance(ip_stats, list):
-                trace_info = parsed.get("trace_info")
-                trace_info = trace_info if isinstance(trace_info, dict) else {}
-                selected_ips = [
-                    str(ip) for ip in trace_info.get("trace_ips", [])
-                    if ip not in (None, "")
-                ]
                 selected_stats = trace_info.get("trace_ip_stats")
                 stats_by_ip = {
                     str(item.get("ip")): item
@@ -157,6 +301,24 @@ def compact_observation_for_llm(observation: str) -> str:
                     "top3": report_stats,
                     "selected_trace_ips": selected_ips,
                 }
+
+                # This evidence is built from the complete ToolExecutor data,
+                # not from compression text or data_sample. Put it before
+                # trace metadata so every selected IP retains real events.
+                top_ip_details, top_ip_records = _build_top_ip_prompt_data(
+                    parsed,
+                    selected_ips or [
+                        str(item.get("ip"))
+                        for item in report_stats
+                        if isinstance(item, dict) and item.get("ip")
+                    ],
+                    report_stats,
+                )
+                if top_ip_details:
+                    projected["top_ip_details"] = top_ip_details
+                if top_ip_records:
+                    projected["top_ip_records"] = top_ip_records
+
             compression = parsed.get("compression")
             if isinstance(compression, dict):
                 # Keep the pre-query summary explicitly available even when
@@ -169,40 +331,11 @@ def compact_observation_for_llm(observation: str) -> str:
                     if key in compression
                 }
 
-            if isinstance(ip_stats, list):
-                records = parsed.get("data")
-                if isinstance(records, list) and ip_stats:
-                    ordered_ips = selected_ips or [
-                        str(item.get("ip"))
-                        for item in ip_stats[:3]
-                        if isinstance(item, dict) and item.get("ip")
-                    ]
-                    records_by_ip = {ip: [] for ip in ordered_ips}
-                    for record in records:
-                        record_ip = _prompt_ip(record)
-                        if record_ip in records_by_ip:
-                            records_by_ip[record_ip].append(record)
-
-                    # Keep a balanced sample for every selected IP.  A global
-                    # ``[:30]`` can be consumed entirely by the highest-volume
-                    # source and leave the second/third timeline without any
-                    # real event details.  Preserve each IP's earliest/latest
-                    # records while staying within the same 30-record budget.
-                    top_ip_records = []
-                    for ip in ordered_ips:
-                        ip_records = sorted(
-                            records_by_ip.get(ip, []),
-                            key=lambda record: str(
-                                _prompt_field(record, "@timestamp_cst")
-                                or _prompt_field(record, "@timestamp")
-                                or ""
-                            ),
-                        )
-                        if len(ip_records) > 10:
-                            ip_records = ip_records[:5] + ip_records[-5:]
-                        top_ip_records.extend(ip_records)
-                    if top_ip_records:
-                        projected["top_ip_records"] = top_ip_records
+            if trace_info:
+                projected["trace_info"] = _compact_trace_info_for_prompt(
+                    trace_info,
+                    selected_ips,
+                )
 
             if "data" in parsed:
                 projected["data_sample"] = (
@@ -218,7 +351,71 @@ def compact_observation_for_llm(observation: str) -> str:
         else:
             compacted = _compact_observation_value(parsed)
         compacted_text = json.dumps(compacted, ensure_ascii=False, separators=(",", ":"))
-        compacted_text = _truncate_observation_text(compacted_text, _MAX_OBSERVATION_CHARS)
+        # Keep the model observation valid JSON. Optional narration is removed
+        # before touching the balanced Top-IP evidence used by the timeline.
+        if len(compacted_text) > _MAX_OBSERVATION_CHARS and isinstance(compacted, dict):
+            for optional_key in ("data_sample", "ppl_query", "steps", "summary_text"):
+                compacted.pop(optional_key, None)
+                compacted_text = json.dumps(
+                    compacted, ensure_ascii=False, separators=(",", ":")
+                )
+                if len(compacted_text) <= _MAX_OBSERVATION_CHARS:
+                    break
+        if len(compacted_text) > _MAX_OBSERVATION_CHARS and isinstance(compacted, dict):
+            records = compacted.get("top_ip_records")
+            if isinstance(records, list):
+                selected_order = [
+                    str(item.get("ip"))
+                    for item in compacted.get("top_ip_details", [])
+                    if isinstance(item, dict) and item.get("ip")
+                ]
+                records_by_ip = {ip: [] for ip in selected_order}
+                for record in records:
+                    if isinstance(record, dict) and str(record.get("ip")) in records_by_ip:
+                        records_by_ip[str(record.get("ip"))].append(record)
+
+                # Reduce evenly and keep at least one real event for every
+                # selected IP. Full counts and first/last times remain in
+                # top_ip_details, which always comes from the complete data.
+                while len(compacted_text) > _MAX_OBSERVATION_CHARS:
+                    candidates = [
+                        ip for ip in selected_order
+                        if len(records_by_ip.get(ip, [])) > 1
+                    ]
+                    if not candidates:
+                        break
+                    ip = max(candidates, key=lambda value: len(records_by_ip[value]))
+                    ip_records = records_by_ip[ip]
+                    del ip_records[len(ip_records) // 2]
+                    compacted["top_ip_records"] = [
+                        record
+                        for ordered_ip in selected_order
+                        for record in records_by_ip.get(ordered_ip, [])
+                    ]
+                    for detail in compacted.get("top_ip_details", []):
+                        if isinstance(detail, dict) and str(detail.get("ip")) == ip:
+                            detail["records_in_prompt"] = len(ip_records)
+                            detail["records_complete"] = False
+                    compacted_text = json.dumps(
+                        compacted, ensure_ascii=False, separators=(",", ":")
+                    )
+
+        if len(compacted_text) > _MAX_OBSERVATION_CHARS and isinstance(compacted, dict):
+            # Last-resort structured projection. Unlike slicing the serialized
+            # string, this remains valid JSON and still retains one grounded
+            # event plus complete aggregate metadata for every selected IP.
+            compacted = {
+                key: compacted[key]
+                for key in (
+                    "count", "http_status", "error", "suggestion",
+                    "ip_summary", "top_ip_details", "top_ip_records",
+                    "compression_meta", "trace_info",
+                )
+                if key in compacted
+            }
+            compacted_text = json.dumps(
+                compacted, ensure_ascii=False, separators=(",", ":")
+            )
 
     if compacted_text != observation:
         app_logger.info(

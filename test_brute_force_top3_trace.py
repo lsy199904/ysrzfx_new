@@ -71,7 +71,7 @@ class BruteForceTop3TraceTests(unittest.TestCase):
                     "time_window": f"{start_time} ~ {end_time}",
                     "graph_data": {
                         "render_lines": [
-                            {"line_id": f"{ip}-line", "count": 2, "event_role": "trace_context"}
+                            {"line_id": f"{ip}-line", "count": 2, "event_role": "global_hit"}
                         ],
                         "stats": {"event_count": 2},
                     },
@@ -114,7 +114,7 @@ class BruteForceTop3TraceTests(unittest.TestCase):
         self.assertTrue(all(item["graph_data"]["rank"] == item["rank"] for item in details))
         self.assertNotIn("10.0.0.4", [call.kwargs["ip"] for call in trace_request.call_args_list])
 
-    def test_render_lines_mark_detection_and_context_without_dropping_context(self):
+    def test_render_lines_mark_every_trace_record_as_global_hit(self):
         graph = build_graph_data({
             "data": [
                 {
@@ -150,11 +150,7 @@ class BruteForceTop3TraceTests(unittest.TestCase):
         self.assertEqual(len(lines), 3)
         self.assertEqual(
             {line["event_role"] for line in lines},
-            {"detection_hit", "trace_context"},
-        )
-        self.assertEqual(
-            sum(line["count"] for line in lines if line["event_role"] == "detection_hit"),
-            1,
+            {"global_hit"},
         )
         self.assertEqual(sum(line["count"] for line in lines), 3)
 

@@ -56,7 +56,7 @@ data: {"final_answer": "**查询结果**\n\n- 总记录数：10 条\n- 关键发
 
 暴力破解自动溯源完成后会发送独立的 `type=graph_data` 事件。`graphs` 最多包含累计覆盖率达到 80% 所需的前三个攻击源，顺序与文字报告完全一致；每个图包含 `ip`、`rank`、`brute_force_count`、`trace_event_count`、`time_window` 和仅用于绘图的 `graph_data.render_lines`。
 
-每条 `render_line` 包含 `line_id`、`direction`、`count`、`status`、`event_role`、`steps`，并可包含 `first_seen`、`last_seen` 和 `details`。`event_role=detection_hit` 表示满足原始暴力破解检测条件，前端可使用高亮实线；`event_role=trace_context` 表示同一 IP、同一独立溯源窗口内的其他真实关联活动，前端可使用浅色或虚线。默认可只展示检测命中和高风险上下文，展开后显示窗口内全部线路。该图表达的是“Source IP Activity Trace / 关联活动溯源”，不表示所有上下文活动都由暴力破解直接导致。
+每条 `render_line` 包含 `line_id`、`direction`、`count`、`status`、`event_role`、`steps`，并可包含 `first_seen`、`last_seen` 和 `details`。所有场景统一返回 `event_role=global_hit`，表示该线路来自指定 IP 和独立溯源时间窗口内的真实查询命中。前端应统一绘制全部 `render_lines`，不再使用暴力破解专用的 `detection_hit/trace_context` 区分。各检测场景的原始命中次数继续使用场景工具自身的统计字段（例如 `brute_force_count`），不由 `event_role` 表达。该图表达的是“Source IP Activity Trace / 关联活动溯源”。
 
 ---
 
